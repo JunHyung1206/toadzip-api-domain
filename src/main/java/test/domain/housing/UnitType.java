@@ -3,8 +3,6 @@ package test.domain.housing;
 import jakarta.persistence.Column;
 import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -18,7 +16,6 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
-import java.util.Objects;
 
 /**
  * 한 단지 안에서 면적·구조·평면을 공유하는 카탈로그 항목. 원천 HWSPR04 의 한 행이 여기 한 줄이다.
@@ -31,13 +28,14 @@ import java.util.Objects;
  * </pre>
  * 면적이 필요한 건 매입임대가 호마다 따로 사들인 집이라 같은 "39형" 안에 39.27㎡와 39.57㎡가 같이 있어서고,
  * 공급유형이 필요한 건 같은 평면이라도 국민임대냐 행복주택이냐에 따라 임대조건이 다른 행이 따로 오기 때문이다.
+ * 공급유형은 이제 소속 {@link ComplexRentalProgram} 이 들고 있다.
  */
 @Entity
 @Table(
         name = "unit_type",
         uniqueConstraints = @UniqueConstraint(
                 name = "uk_unit_type_natural",
-                columnNames = {"complex_id", "supply_type_name", "type_name",
+                columnNames = {"complex_rental_program_id", "type_name",
                         "exclusive_area", "residential_common_area"}
         )
 )
@@ -50,26 +48,12 @@ public class UnitType {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "complex_id", nullable = false)
-    private HousingComplex complex;
+    @JoinColumn(name = "complex_rental_program_id", nullable = false)
+    private ComplexRentalProgram complexRentalProgram;
 
     /** 원천 styleNm. "36", "84", "51A" 처럼 전용면적을 반올림한 숫자에 알파벳이 붙기도 한다. */
     @Column(name = "type_name", nullable = false, length = 50)
     private String typeName;
-
-    /**
-     * 설계에 없던 칸. 원천 suplyTyNm 원문. 단지가 아니라 이 행의 속성이라 여기 있다.
-     *
-     * <p>자연키의 일부라 enum 이 아니라 원문 문자열을 쓴다. enum 으로 두면 모르는 값이 왔을 때
-     * null 이 되어 유니크 제약이 무너진다.
-     */
-    @Column(name = "supply_type_name", nullable = false, length = 30)
-    private String supplyTypeName;
-
-    /** 설계에 없던 칸. 위 원문을 정리한 값. 모르는 값이면 null 이고 원문은 그대로 남는다. */
-    @Enumerated(EnumType.STRING)
-    @Column(name = "supply_type", length = 30)
-    private SupplyType supplyType;
 
     /** 면적은 ㎡ 소수 넷째 자리까지. double 이면 전용+공용 합산에서 오차가 샌다. */
     @Column(name = "exclusive_area", precision = 10, scale = 4)
@@ -78,41 +62,26 @@ public class UnitType {
     @Column(name = "residential_common_area", precision = 10, scale = 4)
     private BigDecimal residentialCommonArea;
 
-
-
-
-    /**
-     * 설계에 없던 칸. 원천 hshldCo 를 행 그대로 담는다.
-     * 이 값은 주택형별 세대수가 아니라 <b>공급유형별 세대수</b>라서 같은 공급유형의 주택형끼리 같은 값이 반복된다.
-     */
-    @Column(name = "supply_type_unit_count")
-    private Integer supplyTypeUnitCount;
-
     /** 설계에 없던 칸. 공고와 무관한 기본 임대조건. */
     @Embedded
     private BaseRentTerms baseRentTerms;
 
-    public UnitType(HousingComplex complex,
-                    String supplyTypeName,
+    public UnitType(ComplexRentalProgram complexRentalProgram,
                     String typeName,
                     BigDecimal exclusiveArea,
                     BigDecimal residentialCommonArea) {
-        this.complex = complex;
-        this.supplyTypeName = supplyTypeName;
-        this.supplyType = SupplyType.from(supplyTypeName);
+        this.complexRentalProgram = complexRentalProgram;
         this.typeName = typeName;
         this.exclusiveArea = exclusiveArea;
         this.residentialCommonArea = residentialCommonArea;
     }
 
     /** @return 실제로 값이 바뀌었으면 true. 안 바뀌었으면 UPDATE 를 보내지 않는다. */
-    public boolean updateSupplyDetails(Integer supplyTypeUnitCount, BaseRentTerms baseRentTerms) {
-        if (Objects.equals(this.supplyTypeUnitCount, supplyTypeUnitCount)
-                && BaseRentTerms.sameValues(this.baseRentTerms, baseRentTerms)) {
+    public boolean updateBaseRentTerms(BaseRentTerms incoming) {
+        if (BaseRentTerms.sameValues(this.baseRentTerms, incoming)) {
             return false;
         }
-        this.supplyTypeUnitCount = supplyTypeUnitCount;
-        this.baseRentTerms = baseRentTerms;
+        this.baseRentTerms = incoming;
         return true;
     }
 }

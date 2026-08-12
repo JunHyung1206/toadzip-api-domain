@@ -16,6 +16,7 @@ import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import test.domain.source.SourceSystem;
 
 import java.time.LocalDate;
 
@@ -31,13 +32,8 @@ import java.time.LocalDate;
  * 그래서 단지 매칭에 이름을 쓰면 안 된다.
  */
 @Entity
-@Table(
-        name = "housing_complex",
-        uniqueConstraints = @UniqueConstraint(
-                name = "uk_housing_complex_source_id",
-                columnNames = "source_complex_id"
-        )
-)
+@Table(name = "housing_complex", uniqueConstraints = @UniqueConstraint(
+        name = "uk_housing_complex_source", columnNames = {"source_system", "source_complex_id"}))
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class HousingComplex {
@@ -56,17 +52,6 @@ public class HousingComplex {
     @JoinColumn(name = "housing_provider_agency_id", nullable = false)
     private HousingProviderAgency housingProviderAgency;
 
-    /**
-     * <b>단지 총 세대수가 아니다.</b> 원천 hshldCo 는 (단지, 공급유형) 단위 값이라
-     * 한 단지에 행복주택 20세대 + 5년임대 2세대가 있으면 20과 2가 따로 온다(604단지 중 18개).
-     * 여기에는 그중 <b>가장 큰 값</b>만 남는다. 행 순서대로 덮어쓰면 값이 계속 뒤집혀서
-     * 다시 적재할 때마다 바뀐 것처럼 보이기 때문이다.
-     *
-     * <p>진짜 합계가 필요하면 {@link UnitType#getSupplyTypeUnitCount()} 를 공급유형별로 중복 제거해 더하면 된다.
-     */
-    @Column(name = "max_supply_type_unit_count")
-    private Integer maxSupplyTypeUnitCount;
-
     /** 설계 필드. 아래 completionDate 에서 연도만 뽑은 값이라 같이 채워진다. */
     private Integer completionYear;
 
@@ -74,8 +59,12 @@ public class HousingComplex {
     @Column(name = "completion_date")
     private LocalDate completionDate;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "source_system", nullable = false, length = 30)
+    private SourceSystem sourceSystem;
+
     /** 원천의 단지 식별자 hsmpSn. */
-    @Column(name = "source_complex_id")
+    @Column(name = "source_complex_id", nullable = false)
     private String sourceComplexId;
 
     @Enumerated(EnumType.STRING)
@@ -109,10 +98,12 @@ public class HousingComplex {
     public HousingComplex(String name,
                           Address address,
                           HousingProviderAgency housingProviderAgency,
+                          SourceSystem sourceSystem,
                           String sourceComplexId) {
         this.name = name;
         this.address = address;
         this.housingProviderAgency = housingProviderAgency;
+        this.sourceSystem = sourceSystem;
         this.sourceComplexId = sourceComplexId;
     }
 
@@ -126,37 +117,23 @@ public class HousingComplex {
      * @return 실제로 값이 바뀌었으면 true
      */
     public boolean updateCatalogDetails(CatalogDetails details) {
-        CatalogDetails merged = details.withMaxSupplyTypeUnitCount(
-                largerUnitCount(details.maxSupplyTypeUnitCount()));
-        if (currentCatalogDetails().equals(merged)) {
+        if (currentCatalogDetails().equals(details)) {
             return false;
         }
-        this.maxSupplyTypeUnitCount = merged.maxSupplyTypeUnitCount();
-        this.completionDate = merged.completionDate();
-        this.completionYear = merged.completionDate() == null ? null : merged.completionDate().getYear();
-        this.heatingType = merged.heatingType();
-        this.heatingTypeName = merged.heatingTypeName();
-        this.parkingSpaces = merged.parkingSpaces();
-        this.corridorType = merged.corridorType();
-        this.elevatorInstallation = merged.elevatorInstallation();
-        this.houseType = merged.houseType();
-        this.houseTypeName = merged.houseTypeName();
+        completionDate = details.completionDate();
+        completionYear = completionDate == null ? null : completionDate.getYear();
+        heatingType = details.heatingType();
+        heatingTypeName = details.heatingTypeName();
+        parkingSpaces = details.parkingSpaces();
+        corridorType = details.corridorType();
+        elevatorInstallation = details.elevatorInstallation();
+        houseType = details.houseType();
+        houseTypeName = details.houseTypeName();
         return true;
     }
 
-    /** 덮어쓰지 않고 큰 값을 남기는 이유는 {@link #maxSupplyTypeUnitCount} 주석에 있다. */
-    private Integer largerUnitCount(Integer incoming) {
-        if (this.maxSupplyTypeUnitCount == null) {
-            return incoming;
-        }
-        if (incoming == null) {
-            return this.maxSupplyTypeUnitCount;
-        }
-        return Math.max(this.maxSupplyTypeUnitCount, incoming);
-    }
-
     public CatalogDetails currentCatalogDetails() {
-        return new CatalogDetails(maxSupplyTypeUnitCount, completionDate, heatingType, heatingTypeName,
+        return new CatalogDetails(completionDate, heatingType, heatingTypeName,
                 parkingSpaces, corridorType, elevatorInstallation, houseType, houseTypeName);
     }
 }

@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.util.MultiValueMap;
 import org.springframework.transaction.PlatformTransactionManager;
+import test.domain.housing.ComplexRentalProgramRepository;
 import test.domain.housing.HouseType;
 import test.domain.housing.HousingComplexRepository;
 import test.domain.housing.HousingProviderAgencyRepository;
@@ -40,6 +41,8 @@ class MyHomeNoticeIngestServiceTest {
     private SupplyLineRepository supplyLineRepository;
     @Autowired
     private HousingComplexRepository complexRepository;
+    @Autowired
+    private ComplexRentalProgramRepository programRepository;
     @Autowired
     private UnitTypeRepository unitTypeRepository;
     @Autowired
@@ -147,8 +150,8 @@ class MyHomeNoticeIngestServiceTest {
     @Test
     @DisplayName("이미 적재된 단지가 있으면 PNU로 공급행에 붙는다")
     void attachesComplexByPnu() {
-        new MyHomeComplexIngestService(null, complexRepository, unitTypeRepository, agencyRepository,
-                new ConstructionRentalPolicy())
+        new MyHomeComplexIngestService(null, complexRepository, programRepository, unitTypeRepository,
+                agencyRepository, new ConstructionRentalPolicy())
                 .apply(MyHomeFixtures.constructedComplexItems());
         long complexCountBefore = complexRepository.count();
 
@@ -271,8 +274,8 @@ class MyHomeNoticeIngestServiceTest {
                 line -> assertThat(line.getComplex()).isNull());
 
         // 공고의 PNU 를 가진 단지가 뒤늦게 들어온다.
-        new MyHomeComplexIngestService(null, complexRepository, unitTypeRepository, agencyRepository,
-                new ConstructionRentalPolicy())
+        new MyHomeComplexIngestService(null, complexRepository, programRepository, unitTypeRepository,
+                agencyRepository, new ConstructionRentalPolicy())
                 .apply(MyHomeFixtures.complexItemsMatchingNotice());
 
         // 공급행 3개(구리 2 + 남양주 1)가 단지 2개에 붙는다.

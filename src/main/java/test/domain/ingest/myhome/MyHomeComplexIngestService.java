@@ -8,12 +8,15 @@ import org.springframework.util.MultiValueMap;
 import test.domain.housing.Address;
 import test.domain.housing.BaseRentTerms;
 import test.domain.housing.CatalogDetails;
+import test.domain.housing.ComplexRentalProgram;
+import test.domain.housing.ComplexRentalProgramRepository;
 import test.domain.housing.HeatingType;
 import test.domain.housing.HouseType;
 import test.domain.housing.HousingComplex;
 import test.domain.housing.HousingComplexRepository;
 import test.domain.housing.HousingProviderAgency;
 import test.domain.housing.HousingProviderAgencyRepository;
+import test.domain.housing.SupplyType;
 import test.domain.housing.UnitType;
 import test.domain.housing.UnitTypeRepository;
 import test.domain.ingest.ConstructionRentalPolicy;
@@ -21,6 +24,7 @@ import test.domain.ingest.IngestReport;
 import test.domain.ingest.IngestRejectionReason;
 import test.domain.ingest.OpenApiClient;
 import test.domain.ingest.SourceValues;
+import test.domain.source.SourceSystem;
 
 import java.util.Collection;
 import java.util.List;
@@ -44,17 +48,20 @@ public class MyHomeComplexIngestService {
 
     private final OpenApiClient myhomeApiClient;
     private final HousingComplexRepository complexRepository;
+    private final ComplexRentalProgramRepository programRepository;
     private final UnitTypeRepository unitTypeRepository;
     private final HousingProviderAgencyRepository agencyRepository;
     private final ConstructionRentalPolicy rentalPolicy;
 
     public MyHomeComplexIngestService(@Qualifier("myhomeComplexApiClient") OpenApiClient myhomeApiClient,
                                       HousingComplexRepository complexRepository,
+                                      ComplexRentalProgramRepository programRepository,
                                       UnitTypeRepository unitTypeRepository,
                                       HousingProviderAgencyRepository agencyRepository,
                                       ConstructionRentalPolicy rentalPolicy) {
         this.myhomeApiClient = myhomeApiClient;
         this.complexRepository = complexRepository;
+        this.programRepository = programRepository;
         this.unitTypeRepository = unitTypeRepository;
         this.agencyRepository = agencyRepository;
         this.rentalPolicy = rentalPolicy;
@@ -137,13 +144,14 @@ public class MyHomeComplexIngestService {
         }
 
         String sourceComplexId = String.valueOf(item.hsmpSn());
-        HousingComplex existing = complexRepository.findBySourceComplexId(sourceComplexId).orElse(null);
+        HousingComplex existing = complexRepository
+                .findBySourceSystemAndSourceComplexId(SourceSystem.MYHOME_PORTAL, sourceComplexId)
+                .orElse(null);
         boolean isNew = existing == null;
 
         HousingComplex complex = isNew ? newComplex(item, sourceComplexId) : existing;
 
         boolean complexChanged = complex.updateCatalogDetails(new CatalogDetails(
-                item.hshldCo(),
                 SourceValues.toDate(item.competDe()),
                 HeatingType.from(item.heatMthdDetailNm()),
                 SourceValues.trimToNull(item.heatMthdDetailNm()),
@@ -179,6 +187,7 @@ public class MyHomeComplexIngestService {
                 complexName(item),
                 address,
                 findOrCreateAgency(item.insttNm()),
+                SourceSystem.MYHOME_PORTAL,
                 sourceComplexId);
     }
 
@@ -205,7 +214,7 @@ public class MyHomeComplexIngestService {
         return district == null ? province : province + " " + district;
     }
 
-    /** @return 주택형을 새로 만들었거나 값이 바뀌었으면 true */
+    /** @return 프로그램 또는 주택형을 새로 만들었거나 값이 바뀌었으면 true */
     private boolean upsertUnitType(HousingComplex complex, MyHomeComplexItem item) {
         String typeName = SourceValues.trimToNull(item.styleNm());
         String supplyTypeName = SourceValues.trimToNull(item.suplyTyNm());
@@ -213,23 +222,37 @@ public class MyHomeComplexIngestService {
             return false;
         }
 
+        boolean programChanged = false;
+        ComplexRentalProgram existingProgram = programRepository
+                .findByHousingComplexAndSupplyTypeName(complex, supplyTypeName)
+                .orElse(null);
+        boolean programIsNew = existingProgram == null;
+        ComplexRentalProgram program = programIsNew
+                ? new ComplexRentalProgram(complex, supplyTypeName, SupplyType.from(supplyTypeName), item.hshldCo())
+                : existingProgram;
+        if (!programIsNew) {
+            programChanged = program.updateUnitCount(item.hshldCo());
+        }
+        if (programIsNew || programChanged) {
+            programRepository.save(program);
+        }
+
         UnitType existing = unitTypeRepository
-                .findByComplexAndSupplyTypeNameAndTypeNameAndExclusiveAreaAndResidentialCommonArea(
-                        complex, supplyTypeName, typeName, item.suplyPrvuseAr(), item.suplyCmnuseAr())
+                .findByComplexRentalProgramAndTypeNameAndExclusiveAreaAndResidentialCommonArea(
+                        program, typeName, item.suplyPrvuseAr(), item.suplyCmnuseAr())
                 .orElse(null);
         boolean isNew = existing == null;
         UnitType unitType = isNew
-                ? new UnitType(complex, supplyTypeName, typeName, item.suplyPrvuseAr(), item.suplyCmnuseAr())
+                ? new UnitType(program, typeName, item.suplyPrvuseAr(), item.suplyCmnuseAr())
                 : existing;
 
-        boolean changed = unitType.updateSupplyDetails(
-                item.hshldCo(),
+        boolean changed = unitType.updateBaseRentTerms(
                 new BaseRentTerms(item.bassRentGtn(), item.bassMtRntchrg(), item.bassCnvrsGtnLmt()));
 
         if (isNew || changed) {
             unitTypeRepository.save(unitType);
         }
-        return isNew || changed;
+        return programIsNew || programChanged || isNew || changed;
     }
 
     /**

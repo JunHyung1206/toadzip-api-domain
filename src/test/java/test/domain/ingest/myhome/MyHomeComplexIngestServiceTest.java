@@ -5,6 +5,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import test.domain.housing.ComplexRentalProgram;
+import test.domain.housing.ComplexRentalProgramRepository;
 import test.domain.housing.HeatingType;
 import test.domain.housing.HouseType;
 import test.domain.housing.HousingComplex;
@@ -31,6 +33,8 @@ class MyHomeComplexIngestServiceTest {
     @Autowired
     private HousingComplexRepository complexRepository;
     @Autowired
+    private ComplexRentalProgramRepository programRepository;
+    @Autowired
     private UnitTypeRepository unitTypeRepository;
     @Autowired
     private HousingProviderAgencyRepository agencyRepository;
@@ -40,7 +44,8 @@ class MyHomeComplexIngestServiceTest {
     @BeforeEach
     void setUp() {
         service = new MyHomeComplexIngestService(
-                null, complexRepository, unitTypeRepository, agencyRepository, new ConstructionRentalPolicy());
+                null, complexRepository, programRepository, unitTypeRepository, agencyRepository,
+                new ConstructionRentalPolicy());
     }
 
     @Test
@@ -123,7 +128,7 @@ class MyHomeComplexIngestServiceTest {
         assertThat(sameName).hasSize(2);
         assertThat(sameName).extracting(UnitType::getExclusiveArea)
                 .allSatisfy(area -> assertThat(area).isEqualByComparingTo(new BigDecimal("49.90")));
-        assertThat(sameName).extracting(UnitType::getSupplyType)
+        assertThat(sameName).extracting(unitType -> unitType.getComplexRentalProgram().getSupplyType())
                 .containsExactlyInAnyOrder(SupplyType.NATIONAL_RENTAL, SupplyType.LONG_TERM_JEONSE);
         // 장기전세는 보증금만 있고 월세가 0이다.
         assertThat(sameName).extracting(unitType -> unitType.getBaseRentTerms().getDeposit())
@@ -162,14 +167,15 @@ class MyHomeComplexIngestServiceTest {
     }
 
     @Test
-    @DisplayName("단지 세대수 칸에는 공급유형별 값 중 큰 쪽만 남는다")
-    void keepsLargestSupplyTypeUnitCount() {
+    @DisplayName("공급유형별 세대수는 단지가 아니라 각 프로그램에 따로 남는다")
+    void keepsUnitCountPerProgram() {
         service.apply(MyHomeFixtures.constructedComplexItems());
 
-        // 국민임대 115 / 장기전세 114 → 큰 쪽. 단지 전체 세대수(229)가 아니라는 걸 이름이 드러낸다.
-        assertThat(complexRepository.findAll().get(0).getMaxSupplyTypeUnitCount()).isEqualTo(115);
-        assertThat(unitTypeRepository.findAll()).extracting(UnitType::getSupplyTypeUnitCount)
-                .containsOnly(115, 114);
+        HousingComplex complex = complexRepository.findAll().get(0);
+        // 국민임대 115 / 장기전세 114. 단지 전체 세대수(229)로 합쳐지지 않는다.
+        assertThat(programRepository.findByHousingComplexOrderBySupplyTypeName(complex))
+                .extracting(ComplexRentalProgram::getUnitCount)
+                .containsExactlyInAnyOrder(115, 114);
     }
 
     @Test

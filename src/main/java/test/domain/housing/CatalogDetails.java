@@ -7,7 +7,6 @@ import java.time.LocalDate;
  * 이름·주소·공급기관은 단지의 정체성이라 여기 들어오지 않는다.
  */
 public record CatalogDetails(
-        Integer maxSupplyTypeUnitCount,
         LocalDate completionDate,
         HeatingType heatingType,
         String heatingTypeName,
@@ -17,9 +16,4 @@ public record CatalogDetails(
         HouseType houseType,
         String houseTypeName
 ) {
-
-    public CatalogDetails withMaxSupplyTypeUnitCount(Integer replacement) {
-        return new CatalogDetails(replacement, completionDate, heatingType, heatingTypeName,
-                parkingSpaces, corridorType, elevatorInstallation, houseType, houseTypeName);
-    }
 }

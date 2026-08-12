@@ -18,6 +18,7 @@ import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import test.domain.source.SourceSystem;
 
 import java.time.LocalDate;
 import java.time.YearMonth;

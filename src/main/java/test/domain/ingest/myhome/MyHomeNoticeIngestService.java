@@ -19,10 +19,10 @@ import test.domain.notice.NoticeSnapshot;
 import test.domain.notice.NoticeVersion;
 import test.domain.notice.NoticeVersionRepository;
 import test.domain.notice.RentTerms;
-import test.domain.notice.SourceSystem;
 import test.domain.notice.SuppliedHousing;
 import test.domain.notice.SupplyLine;
 import test.domain.notice.SupplyLineRepository;
+import test.domain.source.SourceSystem;
 
 import java.time.LocalDate;
 import java.util.ArrayList;

@@ -1,13 +1,15 @@
 package test.domain.housing;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import test.domain.source.SourceSystem;
 
 import java.util.List;
 import java.util.Optional;
 
 public interface HousingComplexRepository extends JpaRepository<HousingComplex, Long> {
 
-    Optional<HousingComplex> findBySourceComplexId(String sourceComplexId);
+    Optional<HousingComplex> findBySourceSystemAndSourceComplexId(
+            SourceSystem sourceSystem, String sourceComplexId);
 
     /**
      * 공고행을 단지에 붙일 때 쓰는 키. 단지명은 매입임대에서 지역명이라 못 쓴다.

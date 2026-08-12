@@ -17,6 +17,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import test.domain.housing.HouseType;
 import test.domain.housing.SupplyType;
+import test.domain.source.SourceSystem;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;

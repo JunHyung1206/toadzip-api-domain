@@ -1,4 +1,4 @@
-package test.domain.notice;
+package test.domain.source;
 
 public enum SourceSystem {
 
