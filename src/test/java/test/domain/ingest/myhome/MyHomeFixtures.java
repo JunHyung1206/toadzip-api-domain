@@ -192,7 +192,7 @@ final class MyHomeFixtures {
                 """, MyHomeComplexItem.class);
     }
 
-    /** HWSPR04 — {@link #noticeItems()} 의 공급행과 PNU 가 일치하는 단지 둘. 재매칭 확인용. */
+    /** HWSPR04 — {@link #noticeItems()} 의 공급행과 PNU 가 일치하는 단지 둘. Task 8 PNU matcher 테스트용. */
     static List<MyHomeComplexItem> complexItemsMatchingNotice() {
         return parse("""
                 {"response":{"header":{"resultCode":"00","resultMsg":"NORMAL SERVICE"},

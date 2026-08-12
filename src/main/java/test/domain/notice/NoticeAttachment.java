@@ -45,7 +45,7 @@ public class NoticeAttachment {
     @JoinColumn(name = "notice_supplement_id", nullable = false)
     private NoticeSupplement noticeSupplement;
 
-    /** 원천 순서. 원천이 순번을 주지 않아 응답 순서를 쓴다({@link SupplyLine} 과 같은 이유). */
+    /** 원천 순서. 원천이 순번을 주지 않아 응답 순서를 쓴다({@link NoticeHousing} 과 같은 이유). */
     @Column(name = "display_order", nullable = false)
     private int displayOrder;
 
