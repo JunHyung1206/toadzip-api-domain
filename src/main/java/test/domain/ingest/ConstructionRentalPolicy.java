@@ -10,8 +10,6 @@ import java.util.Optional;
 @Component
 public class ConstructionRentalPolicy {
 
-    private static final int PNU_LENGTH = 19;
-
     public Optional<IngestRejectionReason> rejectSupplyType(String sourceLabel) {
         SupplyType type = SupplyType.from(sourceLabel);
         if (type == null) {
@@ -28,10 +26,4 @@ public class ConstructionRentalPolicy {
                 || SourceValues.toDate(completionDate) != null;
     }
 
-    public boolean hasValidPnu(String raw) {
-        String value = SourceValues.trimToNull(raw);
-        return value != null
-                && value.length() == PNU_LENGTH
-                && value.chars().allMatch(Character::isDigit);
-    }
 }

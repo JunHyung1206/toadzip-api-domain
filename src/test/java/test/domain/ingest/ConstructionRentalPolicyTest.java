@@ -57,13 +57,4 @@ class ConstructionRentalPolicyTest {
         assertThat(policy.hasConstructionEvidence("다세대주택", "20201230")).isTrue();
     }
 
-    @Test
-    @DisplayName("원천 간 연결에 쓸 수 있는 PNU는 19자리 숫자뿐이다")
-    void validatesPnu() {
-        assertThat(policy.hasValidPnu("4113111600104160001")).isTrue();
-        assertThat(policy.hasValidPnu(" 4113111600104160001 ")).isTrue();
-        assertThat(policy.hasValidPnu("411311160010416000")).isFalse();
-        assertThat(policy.hasValidPnu("411311160010416000A")).isFalse();
-        assertThat(policy.hasValidPnu(null)).isFalse();
-    }
 }
