@@ -30,6 +30,21 @@ public enum SupplyType {
         return sourceLabel;
     }
 
+    /** 이 서비스가 카탈로그와 모집공고로 다루는 건설형 공공임대인가. */
+    public boolean isConstructionRental() {
+        return switch (this) {
+            case NATIONAL_RENTAL,
+                 PERMANENT_RENTAL,
+                 HAPPY_HOUSE,
+                 INTEGRATED_PUBLIC_RENTAL,
+                 LONG_TERM_JEONSE,
+                 FIVE_YEAR_RENTAL,
+                 TEN_YEAR_RENTAL,
+                 FIFTY_YEAR_RENTAL -> true;
+            case PURCHASED_RENTAL, JEONSE_RENTAL -> false;
+        };
+    }
+
     /**
      * 매입임대·전세임대인가. 이 둘만 <b>지어진 단지가 아니다.</b>
      *
