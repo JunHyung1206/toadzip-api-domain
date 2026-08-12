@@ -115,7 +115,7 @@ public class OpenApiClient {
         JsonNode molitHeader = root.path("response").path("header");
         if (molitHeader.isObject()) {
             String code = molitHeader.path("resultCode").asString("");
-            if (!code.isEmpty() && !MOLIT_SUCCESS.equals(code) && !MOLIT_NO_DATA.equals(code)) {
+            if (!MOLIT_SUCCESS.equals(code) && !MOLIT_NO_DATA.equals(code)) {
                 throw new IllegalStateException("원천 오류 resultCode=%s, %s"
                         .formatted(code, molitHeader.path("resultMsg").asString("")));
             }
@@ -124,11 +124,11 @@ public class OpenApiClient {
 
         List<JsonNode> lhHeader = findRows(root, "resHeader");
         if (lhHeader.isEmpty()) {
-            return;
+            throw new IllegalStateException("원천 응답에 resHeader가 없습니다.");
         }
         JsonNode first = lhHeader.get(0);
         String code = first.path("SS_CODE").asString("");
-        if (!code.isEmpty() && !LH_SUCCESS.equals(code)) {
+        if (!LH_SUCCESS.equals(code)) {
             throw new IllegalStateException("원천 오류 SS_CODE=%s, %s"
                     .formatted(code, first.path("RS_MSG").asString("")));
         }

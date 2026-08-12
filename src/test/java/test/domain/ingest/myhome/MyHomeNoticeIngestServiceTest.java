@@ -5,6 +5,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.util.MultiValueMap;
+import org.springframework.transaction.PlatformTransactionManager;
 import test.domain.housing.HouseType;
 import test.domain.housing.HousingComplexRepository;
 import test.domain.housing.HousingProviderAgencyRepository;
@@ -13,6 +15,7 @@ import test.domain.housing.UnitTypeRepository;
 import test.domain.ingest.IngestReport;
 import test.domain.ingest.IngestRejectionReason;
 import test.domain.ingest.ConstructionRentalPolicy;
+import test.domain.ingest.OpenApiClient;
 import test.domain.notice.NoticeChangeStatus;
 import test.domain.notice.NoticeVersion;
 import test.domain.notice.NoticeVersionRepository;
@@ -23,6 +26,7 @@ import test.domain.notice.SupplyLineRepository;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import tools.jackson.databind.json.JsonMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -40,6 +44,8 @@ class MyHomeNoticeIngestServiceTest {
     private UnitTypeRepository unitTypeRepository;
     @Autowired
     private HousingProviderAgencyRepository agencyRepository;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     private MyHomeNoticeIngestService service;
 
@@ -47,7 +53,7 @@ class MyHomeNoticeIngestServiceTest {
     void setUp() {
         service = new MyHomeNoticeIngestService(
                 null, noticeVersionRepository, supplyLineRepository, complexRepository,
-                new ConstructionRentalPolicy());
+                new ConstructionRentalPolicy(), transactionManager);
     }
 
     @Test
@@ -179,6 +185,48 @@ class MyHomeNoticeIngestServiceTest {
                     assertThat(line.getDisplayOrder()).isZero();
                     assertThat(line.getSuppliedHousing().getComplexName()).isEqualTo("정상단지");
                 });
+    }
+
+    @Test
+    @DisplayName("한 공고 안에서 공급유형이 갈리면 공고 전체를 저장하지 않는다")
+    void rejectsNoticeWithInconsistentSupplyTypes() {
+        IngestReport report = service.apply(MyHomeFixtures.noticeItemsWithMixedSupplyTypes());
+
+        assertThat(report.rejectedByReason())
+                .containsEntry(IngestRejectionReason.INVALID_SOURCE_ROW, 1);
+        assertThat(noticeVersionRepository.count()).isZero();
+        assertThat(supplyLineRepository.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("한 공고의 공급행이 페이지 경계에 걸려도 모두 모아 한 번 저장한다")
+    void groupsNoticeAcrossPageBoundaries() {
+        List<MyHomeNoticeItem> rows = MyHomeFixtures.noticeItems().stream()
+                .filter(item -> item.pblancId().equals("20989"))
+                .toList();
+        OpenApiClient pagedClient = new OpenApiClient(
+                JsonMapper.builder().build(), "unused", "unused", "paged") {
+            private int call;
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> List<T> getList(String path, MultiValueMap<String, String> params,
+                                       String listKey, Class<T> type) {
+                return call < rows.size()
+                        ? (List<T>) List.of(rows.get(call++))
+                        : List.of();
+            }
+        };
+        service = new MyHomeNoticeIngestService(
+                pagedClient, noticeVersionRepository, supplyLineRepository, complexRepository,
+                new ConstructionRentalPolicy(), transactionManager);
+
+        IngestReport report = service.ingest(MyHomeNoticeIngestService.RENTAL_PATH, 1, 10);
+
+        NoticeVersion saved = noticeVersionRepository.findBySourceNoticeId("20989").orElseThrow();
+        assertThat(report.created()).isOne();
+        assertThat(report.unchanged()).isZero();
+        assertThat(supplyLineRepository.findByNoticeVersionOrderByDisplayOrder(saved)).hasSize(2);
     }
 
     @Test

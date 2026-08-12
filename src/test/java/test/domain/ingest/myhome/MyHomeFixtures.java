@@ -334,6 +334,24 @@ final class MyHomeFixtures {
                 """, MyHomeNoticeItem.class);
     }
 
+    /** 같은 공고 ID 안에 허용 유형과 비지원 유형이 섞인 깨진 원천 응답. */
+    static List<MyHomeNoticeItem> noticeItemsWithMixedSupplyTypes() {
+        return parse("""
+                {"response":{"body":{"item":[
+                  {"pblancId":"30003","houseSn":1,"sttusNm":"일반공고","pblancNm":"혼합 공급유형 공고",
+                   "suplyInsttNm":"LH","houseTyNm":"아파트","suplyTyNm":"행복주택","beforePblancId":"",
+                   "rcritPblancDe":"20260801","url":"https://apply.lh.or.kr/?panId=mixed",
+                   "hsmpNm":"행복단지","fullAdres":"경기도 성남시 테스트로 1",
+                   "pnu":"4113111600104160001","sumSuplyCo":10,"beginDe":"20260810","endDe":"20260812"},
+                  {"pblancId":"30003","houseSn":2,"sttusNm":"일반공고","pblancNm":"혼합 공급유형 공고",
+                   "suplyInsttNm":"LH","houseTyNm":"다가구주택","suplyTyNm":"전세임대","beforePblancId":"",
+                   "rcritPblancDe":"20260801","url":"https://apply.lh.or.kr/?panId=mixed",
+                   "hsmpNm":"전세 대상","fullAdres":"경기도 성남시 테스트로 2",
+                   "pnu":"4113111600104160002","sumSuplyCo":5,"beginDe":"20260810","endDe":"20260812"}
+                ]}}}
+                """, MyHomeNoticeItem.class);
+    }
+
     /** 공급유형은 허용되지만 대상 주택을 식별할 수 없는 공고. */
     static List<MyHomeNoticeItem> constructionNoticeWithoutValidSupplyLine() {
         return parse("""

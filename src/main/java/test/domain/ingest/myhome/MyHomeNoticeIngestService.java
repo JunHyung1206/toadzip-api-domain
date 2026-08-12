@@ -5,6 +5,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import test.domain.housing.HousingComplex;
 import test.domain.housing.HousingComplexRepository;
 import test.domain.ingest.ConstructionRentalPolicy;
@@ -28,6 +30,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -61,21 +64,25 @@ public class MyHomeNoticeIngestService {
     private final SupplyLineRepository supplyLineRepository;
     private final HousingComplexRepository complexRepository;
     private final ConstructionRentalPolicy rentalPolicy;
+    private final TransactionTemplate transactionTemplate;
 
     public MyHomeNoticeIngestService(@Qualifier("myhomeNoticeApiClient") OpenApiClient myhomeApiClient,
                                      NoticeVersionRepository noticeVersionRepository,
                                      SupplyLineRepository supplyLineRepository,
                                      HousingComplexRepository complexRepository,
-                                     ConstructionRentalPolicy rentalPolicy) {
+                                     ConstructionRentalPolicy rentalPolicy,
+                                     PlatformTransactionManager transactionManager) {
         this.myhomeApiClient = myhomeApiClient;
         this.noticeVersionRepository = noticeVersionRepository;
         this.supplyLineRepository = supplyLineRepository;
         this.complexRepository = complexRepository;
         this.rentalPolicy = rentalPolicy;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     public IngestReport ingest(String path, int pageSize, int maxPages) {
-        IngestReport report = IngestReport.empty();
+        List<MyHomeNoticeItem> allItems = new ArrayList<>();
+        boolean reachedEnd = false;
         for (int page = 1; page <= maxPages; page++) {
             MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
             params.add("numOfRows", String.valueOf(pageSize));
@@ -85,14 +92,20 @@ public class MyHomeNoticeIngestService {
                     myhomeApiClient.getList(path, params, LIST_POINTER, MyHomeNoticeItem.class);
             log.info("마이홈 공고 {} {}페이지 {}행", path, page, items.size());
             if (items.isEmpty()) {
+                reachedEnd = true;
                 break;
             }
-            report = report.plus(apply(items));
+            allItems.addAll(items);
             if (items.size() < pageSize) {
+                reachedEnd = true;
                 break;
             }
         }
-        return report;
+        if (!reachedEnd) {
+            log.warn("마이홈 공고가 maxPages={} 안에 끝나지 않아 부분 적재하지 않습니다: {}행", maxPages, allItems.size());
+            return IngestReport.oneFailed();
+        }
+        return apply(allItems);
     }
 
     /**
@@ -136,7 +149,9 @@ public class MyHomeNoticeIngestService {
             }
         }
         for (Map.Entry<String, List<MyHomeNoticeItem>> notice : groupByNoticeInChainOrder(items).entrySet()) {
-            report = report.plus(applyNotice(notice.getKey(), notice.getValue()));
+            IngestReport noticeReport = transactionTemplate.execute(
+                    status -> applyNotice(notice.getKey(), notice.getValue()));
+            report = report.plus(Objects.requireNonNull(noticeReport));
         }
         return report;
     }
@@ -159,18 +174,35 @@ public class MyHomeNoticeIngestService {
 
     private IngestReport applyNotice(String pblancId, List<MyHomeNoticeItem> rows) {
         MyHomeNoticeItem head = rows.get(0);
+        String supplyTypeLabel = SourceValues.trimToNull(head.suplyTyNm());
+        boolean inconsistentSupplyType = rows.stream()
+                .map(MyHomeNoticeItem::suplyTyNm)
+                .map(SourceValues::trimToNull)
+                .anyMatch(label -> !Objects.equals(label, supplyTypeLabel));
+        if (inconsistentSupplyType) {
+            log.warn("한 공고 안에서 공급유형이 갈려 제외합니다: pblancId={}, firstSupplyType={}",
+                    pblancId, supplyTypeLabel);
+            return IngestReport.oneRejected(IngestRejectionReason.INVALID_SOURCE_ROW);
+        }
 
-        Optional<IngestRejectionReason> supplyTypeRejection = rentalPolicy.rejectSupplyType(head.suplyTyNm());
+        Optional<IngestRejectionReason> supplyTypeRejection = rentalPolicy.rejectSupplyType(supplyTypeLabel);
         if (supplyTypeRejection.isPresent()) {
             log.debug("공고 제외: pblancId={}, supplyType={}, reason={}",
                     pblancId, head.suplyTyNm(), supplyTypeRejection.get());
             return IngestReport.oneRejected(supplyTypeRejection.get());
         }
 
-        List<MyHomeNoticeItem> validRows = rows.stream().filter(this::validSupplyLine).toList();
+        List<MyHomeNoticeItem> validRows = new ArrayList<>();
         IngestReport rejectedRows = IngestReport.empty();
-        for (int count = validRows.size(); count < rows.size(); count++) {
-            rejectedRows = rejectedRows.plus(IngestReport.oneRejected(IngestRejectionReason.INVALID_SOURCE_ROW));
+        for (MyHomeNoticeItem row : rows) {
+            if (validSupplyLine(row)) {
+                validRows.add(row);
+                continue;
+            }
+            log.warn("공급행 제외: source=MYHOME_NOTICE, pblancId={}, houseSn={}, supplyType={}, reason={}",
+                    pblancId, row.houseSn(), row.suplyTyNm(), IngestRejectionReason.INVALID_SOURCE_ROW);
+            rejectedRows = rejectedRows.plus(
+                    IngestReport.oneRejected(IngestRejectionReason.INVALID_SOURCE_ROW));
         }
         if (validRows.isEmpty()) {
             log.warn("유효한 공급행이 없어 공고를 제외합니다: pblancId={}", pblancId);

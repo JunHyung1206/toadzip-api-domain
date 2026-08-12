@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 import java.time.YearMonth;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DataJpaTest
 class NoticeSupplementPersistenceTest {
@@ -70,6 +71,13 @@ class NoticeSupplementPersistenceTest {
         assertThat(receptionPlaceRepository.count()).isOne();
         assertThat(complexSnapshotRepository.count()).isOne();
         assertThat(attachmentRepository.count()).isOne();
+
+        assertThatThrownBy(() -> saved.getAttachments().clear())
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> saved.addAttachment(1, "공고문(PDF)", "추가.pdf",
+                "https://apply.lh.or.kr/extra.pdf", null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("저장된 보충 스냅샷");
     }
 
     private NoticeSnapshot snapshot() {

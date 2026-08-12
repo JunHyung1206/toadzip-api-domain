@@ -83,6 +83,7 @@ public class NoticeSupplement {
                             LocalDate documentSubmissionEndOn,
                             LocalDate contractBeginOn,
                             LocalDate contractEndOn) {
+        requireNew();
         schedules.add(new NoticeSchedule(this, displayOrder, complexLabel, applicationPeriodText,
                 documentTargetAnnouncedOn, documentSubmissionBeginOn, documentSubmissionEndOn,
                 contractBeginOn, contractEndOn));
@@ -95,6 +96,7 @@ public class NoticeSupplement {
                                   String operationEndText,
                                   String phone,
                                   String guidance) {
+        requireNew();
         receptionPlaces.add(new ReceptionPlace(this, displayOrder, address, detailAddress,
                 operationBeginText, operationEndText, phone, guidance));
     }
@@ -107,6 +109,7 @@ public class NoticeSupplement {
                                    String heatingDescription,
                                    String exclusiveAreaRangeText,
                                    YearMonth expectedMoveInYearMonth) {
+        requireNew();
         complexSnapshots.add(new NoticeComplexSnapshot(this, displayOrder, complexLabel, lotAddress,
                 lotDetailAddress, totalUnitCount, heatingDescription, exclusiveAreaRangeText,
                 expectedMoveInYearMonth));
@@ -117,6 +120,29 @@ public class NoticeSupplement {
                               String name,
                               String url,
                               String complexLabel) {
+        requireNew();
         attachments.add(new NoticeAttachment(this, displayOrder, kind, name, url, complexLabel));
+    }
+
+    public List<NoticeSchedule> getSchedules() {
+        return List.copyOf(schedules);
+    }
+
+    public List<ReceptionPlace> getReceptionPlaces() {
+        return List.copyOf(receptionPlaces);
+    }
+
+    public List<NoticeComplexSnapshot> getComplexSnapshots() {
+        return List.copyOf(complexSnapshots);
+    }
+
+    public List<NoticeAttachment> getAttachments() {
+        return List.copyOf(attachments);
+    }
+
+    private void requireNew() {
+        if (id != null) {
+            throw new IllegalStateException("저장된 보충 스냅샷은 수정할 수 없습니다.");
+        }
     }
 }

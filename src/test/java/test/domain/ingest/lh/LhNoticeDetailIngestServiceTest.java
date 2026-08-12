@@ -3,8 +3,11 @@ package test.domain.ingest.lh;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import jakarta.persistence.EntityManager;
 import test.domain.ingest.IngestReport;
 import test.domain.ingest.OpenApiClient;
@@ -30,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /** LH 15057999 실제 응답 모양 그대로 태운다. HTTP만 빠져 있다. */
 @DataJpaTest
+@ExtendWith(OutputCaptureExtension.class)
 class LhNoticeDetailIngestServiceTest {
 
     private static final ObjectMapper MAPPER = JsonMapper.builder().build();
@@ -134,6 +138,22 @@ class LhNoticeDetailIngestServiceTest {
     }
 
     @Test
+    @DisplayName("값이 있는 날짜를 변환하지 못하면 원천 위치와 원문을 경고한다")
+    void logsUnparseableOptionalDates(CapturedOutput output) {
+        service.apply(lhNotice, MAPPER.readTree("""
+                [
+                  {"dsSplScdl":[{"SBD_LGO_NM":"테스트 단지","CTRT_ED_DT":"2027.99.99"}]},
+                  {"dsSbd":[{"LCC_NT_NM":"테스트 단지","MVIN_XPC_YM":"2027.13"}]},
+                  {"resHeader":[{"SS_CODE":"Y"}]}
+                ]
+                """));
+
+        assertThat(output).contains(
+                "dsSplScdl[0].CTRT_ED_DT", "2027.99.99",
+                "dsSbd[0].MVIN_XPC_YM", "2027.13");
+    }
+
+    @Test
     @DisplayName("원천이 값 대신 컬럼 이름을 담아 보내는 행이 섞여 온다")
     void sourceMixesLabelRowsIntoTheSameDataset() {
         JsonNode root = MAPPER.readTree(LH_DETAIL_RESPONSE);
@@ -179,7 +199,9 @@ class LhNoticeDetailIngestServiceTest {
                {"AHFL_URL":"https://apply.lh.or.kr/lhapply/lhFile.do?fileid=68041511",
                 "SL_PAN_AHFL_DS_CD_NM":"공고문(hwp)","CMN_AHFL_NM":"부산정관A4 행복주택 모집공고문.hwp"},
                {"AHFL_URL":"https://apply.lh.or.kr/lhapply/lhFile.do?fileid=68041512",
-                "SL_PAN_AHFL_DS_CD_NM":"공고문(PDF)","CMN_AHFL_NM":"부산정관A4 행복주택 모집공고문.pdf"}]},
+                "SL_PAN_AHFL_DS_CD_NM":"공고문(PDF)","CMN_AHFL_NM":"부산정관A4 행복주택 모집공고문.pdf"},
+               {"AHFL_URL":"http-invalid","SL_PAN_AHFL_DS_CD_NM":"공고문(PDF)",
+                "CMN_AHFL_NM":"잘못된 URL.pdf"}]},
              {"dsAhflInfoNm":[{"AHFL_URL":"다운로드","SL_PAN_AHFL_DS_CD_NM":"파일구분명","CMN_AHFL_NM":"첨부파일명"}]},
              {"dsSbdAhfl":[
                {"LCC_NT_NM":"부산정관 A4블록 행복주택",

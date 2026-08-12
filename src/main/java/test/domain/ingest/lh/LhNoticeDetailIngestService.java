@@ -18,6 +18,10 @@ import test.domain.notice.SourceSystem;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.net.URI;
+import java.time.LocalDate;
+import java.time.YearMonth;
+
 /**
  * 15057999 → 이미 적재된 {@link NoticeVersion} 에 LH 상세를 덧입힌다.
  *
@@ -155,27 +159,42 @@ public class LhNoticeDetailIngestService {
     }
 
     private void addSchedules(NoticeSupplement supplement, JsonNode root) {
+        int sourceOrder = 0;
         for (JsonNode row : OpenApiClient.findRows(root, "dsSplScdl")) {
+            int rowOrder = sourceOrder++;
             LhNoticeDetail.Schedule schedule = objectMapper.convertValue(row, LhNoticeDetail.Schedule.class);
             String complexName = SourceValues.trimToNull(schedule.complexName());
             String applicationPeriod = SourceValues.trimToNull(schedule.applicationPeriod());
+            LocalDate documentTargetAnnouncementDate = date(
+                    "dsSplScdl[%d].PPR_SBM_OPE_ANC_DT".formatted(rowOrder),
+                    schedule.documentTargetAnnouncementDate());
+            LocalDate documentSubmissionBeginDate = date(
+                    "dsSplScdl[%d].PPR_ACP_ST_DT".formatted(rowOrder),
+                    schedule.documentSubmissionBeginDate());
+            LocalDate documentSubmissionEndDate = date(
+                    "dsSplScdl[%d].PPR_ACP_CLSG_DT".formatted(rowOrder),
+                    schedule.documentSubmissionEndDate());
+            LocalDate contractBeginDate = date(
+                    "dsSplScdl[%d].CTRT_ST_DT".formatted(rowOrder), schedule.contractBeginDate());
+            LocalDate contractEndDate = date(
+                    "dsSplScdl[%d].CTRT_ED_DT".formatted(rowOrder), schedule.contractEndDate());
             if (complexName == null && applicationPeriod == null
-                    && SourceValues.toDate(schedule.documentTargetAnnouncementDate()) == null
-                    && SourceValues.toDate(schedule.documentSubmissionBeginDate()) == null
-                    && SourceValues.toDate(schedule.documentSubmissionEndDate()) == null
-                    && SourceValues.toDate(schedule.contractBeginDate()) == null
-                    && SourceValues.toDate(schedule.contractEndDate()) == null) {
+                    && documentTargetAnnouncementDate == null
+                    && documentSubmissionBeginDate == null
+                    && documentSubmissionEndDate == null
+                    && contractBeginDate == null
+                    && contractEndDate == null) {
                 continue;
             }
             supplement.addSchedule(
                     supplement.getSchedules().size(),
                     complexName,
                     applicationPeriod,
-                    SourceValues.toDate(schedule.documentTargetAnnouncementDate()),
-                    SourceValues.toDate(schedule.documentSubmissionBeginDate()),
-                    SourceValues.toDate(schedule.documentSubmissionEndDate()),
-                    SourceValues.toDate(schedule.contractBeginDate()),
-                    SourceValues.toDate(schedule.contractEndDate()));
+                    documentTargetAnnouncementDate,
+                    documentSubmissionBeginDate,
+                    documentSubmissionEndDate,
+                    contractBeginDate,
+                    contractEndDate);
         }
     }
 
@@ -198,7 +217,9 @@ public class LhNoticeDetailIngestService {
     }
 
     private void addComplexSnapshots(NoticeSupplement supplement, JsonNode root) {
+        int sourceOrder = 0;
         for (JsonNode row : OpenApiClient.findRows(root, "dsSbd")) {
+            int rowOrder = sourceOrder++;
             LhNoticeDetail.ComplexSnapshot complex =
                     objectMapper.convertValue(row, LhNoticeDetail.ComplexSnapshot.class);
             String complexName = SourceValues.trimToNull(complex.complexName());
@@ -207,9 +228,11 @@ public class LhNoticeDetailIngestService {
             Integer totalUnitCount = SourceValues.toInt(complex.totalUnitCount());
             String heatingDescription = SourceValues.trimToNull(complex.heatingDescription());
             String exclusiveAreaRange = SourceValues.trimToNull(complex.exclusiveAreaRange());
+            YearMonth expectedMoveInYearMonth = yearMonth(
+                    "dsSbd[%d].MVIN_XPC_YM".formatted(rowOrder), complex.expectedMoveInYearMonth());
             if (complexName == null && lotAddress == null && lotDetailAddress == null
                     && totalUnitCount == null && heatingDescription == null && exclusiveAreaRange == null
-                    && SourceValues.toYearMonth(complex.expectedMoveInYearMonth()) == null) {
+                    && expectedMoveInYearMonth == null) {
                 continue;
             }
             supplement.addComplexSnapshot(
@@ -220,8 +243,32 @@ public class LhNoticeDetailIngestService {
                     totalUnitCount,
                     heatingDescription,
                     exclusiveAreaRange,
-                    SourceValues.toYearMonth(complex.expectedMoveInYearMonth()));
+                    expectedMoveInYearMonth);
         }
+    }
+
+    private LocalDate date(String sourcePath, String raw) {
+        String value = SourceValues.trimToNull(raw);
+        if (value == null) {
+            return null;
+        }
+        LocalDate parsed = SourceValues.toDate(value);
+        if (parsed == null) {
+            log.warn("LH 상세 날짜 변환 실패: field={}, raw={}", sourcePath, value);
+        }
+        return parsed;
+    }
+
+    private YearMonth yearMonth(String sourcePath, String raw) {
+        String value = SourceValues.trimToNull(raw);
+        if (value == null) {
+            return null;
+        }
+        YearMonth parsed = SourceValues.toYearMonth(value);
+        if (parsed == null) {
+            log.warn("LH 상세 입주예정월 변환 실패: field={}, raw={}", sourcePath, value);
+        }
+        return parsed;
     }
 
     /** 공고문 파일과 단지 이미지를 응답 순서대로 한 줄로 잇는다. 둘 다 "공고에 딸린 파일"이라 같은 테이블이다. */
@@ -245,10 +292,23 @@ public class LhNoticeDetailIngestService {
         String trimmedUrl = SourceValues.trimToNull(url);
         String trimmedKind = SourceValues.trimToNull(kind);
         String trimmedName = SourceValues.trimToNull(name);
-        if (trimmedUrl == null || !trimmedUrl.startsWith("http") || trimmedKind == null || trimmedName == null) {
+        if (!isHttpUrl(trimmedUrl) || trimmedKind == null || trimmedName == null) {
             return;
         }
         supplement.addAttachment(supplement.getAttachments().size(), trimmedKind, trimmedName,
                 trimmedUrl, SourceValues.trimToNull(complexLabel));
+    }
+
+    private boolean isHttpUrl(String raw) {
+        if (raw == null) {
+            return false;
+        }
+        try {
+            URI uri = URI.create(raw);
+            return ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+                    && uri.getHost() != null;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 }
