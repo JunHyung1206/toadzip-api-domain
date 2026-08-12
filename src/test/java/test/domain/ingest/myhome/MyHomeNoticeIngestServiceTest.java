@@ -11,6 +11,8 @@ import test.domain.housing.HousingProviderAgencyRepository;
 import test.domain.housing.SupplyType;
 import test.domain.housing.UnitTypeRepository;
 import test.domain.ingest.IngestReport;
+import test.domain.ingest.IngestRejectionReason;
+import test.domain.ingest.ConstructionRentalPolicy;
 import test.domain.notice.NoticeChangeStatus;
 import test.domain.notice.NoticeVersion;
 import test.domain.notice.NoticeVersionRepository;
@@ -43,7 +45,8 @@ class MyHomeNoticeIngestServiceTest {
     @BeforeEach
     void setUp() {
         service = new MyHomeNoticeIngestService(
-                null, noticeVersionRepository, supplyLineRepository, complexRepository);
+                null, noticeVersionRepository, supplyLineRepository, complexRepository,
+                new ConstructionRentalPolicy());
     }
 
     @Test
@@ -137,7 +140,8 @@ class MyHomeNoticeIngestServiceTest {
     @Test
     @DisplayName("이미 적재된 단지가 있으면 PNU로 공급행에 붙는다")
     void attachesComplexByPnu() {
-        new MyHomeComplexIngestService(null, complexRepository, unitTypeRepository, agencyRepository)
+        new MyHomeComplexIngestService(null, complexRepository, unitTypeRepository, agencyRepository,
+                new ConstructionRentalPolicy())
                 .apply(MyHomeFixtures.constructedComplexItems());
         long complexCountBefore = complexRepository.count();
 
@@ -155,9 +159,46 @@ class MyHomeNoticeIngestServiceTest {
     void skipsJeonseRentalNotice() {
         IngestReport report = service.apply(MyHomeFixtures.noticeItemsWithoutComplex());
 
-        assertThat(report).isEqualTo(new IngestReport(0, 0, 0, 1));
+        assertThat(report.rejectedByReason())
+                .containsEntry(IngestRejectionReason.UNSUPPORTED_SUPPLY_TYPE, 1);
         assertThat(noticeVersionRepository.count()).isZero();
         assertThat(supplyLineRepository.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("한 공고에 깨진 공급행이 섞여도 정상 행만 순서를 다시 매겨 저장한다")
+    void rejectsOnlyInvalidSupplyLines() {
+        IngestReport report = service.apply(MyHomeFixtures.noticeItemsWithInvalidSupplyLine());
+
+        assertThat(report.created()).isOne();
+        assertThat(report.rejectedByReason())
+                .containsEntry(IngestRejectionReason.INVALID_SOURCE_ROW, 1);
+        assertThat(supplyLineRepository.findAll()).singleElement()
+                .satisfies(line -> {
+                    assertThat(line.getDisplayOrder()).isZero();
+                    assertThat(line.getSuppliedHousing().getComplexName()).isEqualTo("정상단지");
+                });
+    }
+
+    @Test
+    @DisplayName("건설형 임대 공고라도 유효한 공급행이 없으면 공고버전도 저장하지 않는다")
+    void rejectsNoticeWithoutValidSupplyLine() {
+        IngestReport report = service.apply(MyHomeFixtures.constructionNoticeWithoutValidSupplyLine());
+
+        assertThat(report.rejectedByReason())
+                .containsEntry(IngestRejectionReason.INVALID_SOURCE_ROW, 1);
+        assertThat(noticeVersionRepository.count()).isZero();
+        assertThat(supplyLineRepository.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("공고 ID가 없는 행은 조용히 사라지지 않고 제외 사유로 남는다")
+    void reportsMissingNoticeIdentity() {
+        IngestReport report = service.apply(MyHomeFixtures.noticeItemWithoutIdentity());
+
+        assertThat(report.rejectedByReason())
+                .containsEntry(IngestRejectionReason.MISSING_IDENTITY, 1);
+        assertThat(noticeVersionRepository.count()).isZero();
     }
 
     @Test
@@ -181,7 +222,8 @@ class MyHomeNoticeIngestServiceTest {
                 line -> assertThat(line.getComplex()).isNull());
 
         // 공고의 PNU 를 가진 단지가 뒤늦게 들어온다.
-        new MyHomeComplexIngestService(null, complexRepository, unitTypeRepository, agencyRepository)
+        new MyHomeComplexIngestService(null, complexRepository, unitTypeRepository, agencyRepository,
+                new ConstructionRentalPolicy())
                 .apply(MyHomeFixtures.complexItemsMatchingNotice());
 
         // 공급행 3개(구리 2 + 남양주 1)가 단지 2개에 붙는다.

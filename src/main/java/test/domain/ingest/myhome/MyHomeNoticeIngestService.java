@@ -7,8 +7,9 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import test.domain.housing.HousingComplex;
 import test.domain.housing.HousingComplexRepository;
-import test.domain.housing.SupplyType;
+import test.domain.ingest.ConstructionRentalPolicy;
 import test.domain.ingest.IngestReport;
+import test.domain.ingest.IngestRejectionReason;
 import test.domain.ingest.OpenApiClient;
 import test.domain.ingest.SourceValues;
 import test.domain.notice.NoticeChangeStatus;
@@ -59,15 +60,18 @@ public class MyHomeNoticeIngestService {
     private final NoticeVersionRepository noticeVersionRepository;
     private final SupplyLineRepository supplyLineRepository;
     private final HousingComplexRepository complexRepository;
+    private final ConstructionRentalPolicy rentalPolicy;
 
     public MyHomeNoticeIngestService(@Qualifier("myhomeNoticeApiClient") OpenApiClient myhomeApiClient,
                                      NoticeVersionRepository noticeVersionRepository,
                                      SupplyLineRepository supplyLineRepository,
-                                     HousingComplexRepository complexRepository) {
+                                     HousingComplexRepository complexRepository,
+                                     ConstructionRentalPolicy rentalPolicy) {
         this.myhomeApiClient = myhomeApiClient;
         this.noticeVersionRepository = noticeVersionRepository;
         this.supplyLineRepository = supplyLineRepository;
         this.complexRepository = complexRepository;
+        this.rentalPolicy = rentalPolicy;
     }
 
     public IngestReport ingest(String path, int pageSize, int maxPages) {
@@ -125,6 +129,12 @@ public class MyHomeNoticeIngestService {
     /** 공고 단위로 커밋된다. 이미 저장된 pblancId 는 건드리지 않으므로 몇 번을 돌려도 결과가 같다. */
     public IngestReport apply(List<MyHomeNoticeItem> items) {
         IngestReport report = IngestReport.empty();
+        for (MyHomeNoticeItem item : items) {
+            if (SourceValues.trimToNull(item.pblancId()) == null) {
+                log.warn("공고 ID가 없는 원천 행을 제외합니다: {}", item.pblancNm());
+                report = report.plus(IngestReport.oneRejected(IngestRejectionReason.MISSING_IDENTITY));
+            }
+        }
         for (Map.Entry<String, List<MyHomeNoticeItem>> notice : groupByNoticeInChainOrder(items).entrySet()) {
             report = report.plus(applyNotice(notice.getKey(), notice.getValue()));
         }
@@ -150,31 +160,56 @@ public class MyHomeNoticeIngestService {
     private IngestReport applyNotice(String pblancId, List<MyHomeNoticeItem> rows) {
         MyHomeNoticeItem head = rows.get(0);
 
-        // 건설임대만 담는다. 매입임대·전세임대 공고는 대상 주택이 아예 없어(houseSn=0) 단지에 붙지 않는다.
-        if (SupplyType.isPurchasedOrJeonse(head.suplyTyNm())) {
-            return new IngestReport(0, 0, 0, 1);
+        Optional<IngestRejectionReason> supplyTypeRejection = rentalPolicy.rejectSupplyType(head.suplyTyNm());
+        if (supplyTypeRejection.isPresent()) {
+            log.debug("공고 제외: pblancId={}, supplyType={}, reason={}",
+                    pblancId, head.suplyTyNm(), supplyTypeRejection.get());
+            return IngestReport.oneRejected(supplyTypeRejection.get());
         }
+
+        List<MyHomeNoticeItem> validRows = rows.stream().filter(this::validSupplyLine).toList();
+        IngestReport rejectedRows = IngestReport.empty();
+        for (int count = validRows.size(); count < rows.size(); count++) {
+            rejectedRows = rejectedRows.plus(IngestReport.oneRejected(IngestRejectionReason.INVALID_SOURCE_ROW));
+        }
+        if (validRows.isEmpty()) {
+            log.warn("유효한 공급행이 없어 공고를 제외합니다: pblancId={}", pblancId);
+            return rejectedRows;
+        }
+        MyHomeNoticeItem validHead = validRows.get(0);
 
         Optional<NoticeVersion> alreadyStored = noticeVersionRepository.findBySourceNoticeId(pblancId);
         if (alreadyStored.isPresent()) {
             // 마이홈은 정정 때 새 pblancId 를 발급한다. 그런데도 내용이 달라졌다면 원천이 제자리에서 고친 것이라
             // 우리 스냅샷이 조용히 낡는다. 버전을 함부로 만들지는 않되 눈에 보이게 남긴다.
-            if (!alreadyStored.get().hasSameContentAs(snapshotOf(head))) {
+            if (!alreadyStored.get().hasSameContentAs(snapshotOf(validHead))) {
                 log.warn("공고 {}의 내용이 같은 pblancId 로 바뀌었습니다. 원천이 제자리에서 수정한 것으로 보입니다.",
                         pblancId);
             }
-            return new IngestReport(0, 0, 1, 0);
+            return IngestReport.oneUnchanged().plus(rejectedRows);
         }
 
-        Optional<NoticeVersion> previous = findPrevious(head);
+        Optional<NoticeVersion> previous = findPrevious(validHead);
         NoticeVersion version = previous
-                .map(prior -> prior.nextVersion(pblancId, snapshotOf(head)))
-                .orElseGet(() -> NoticeVersion.firstVersion(pblancId, SourceSystem.MYHOME_PORTAL, snapshotOf(head)));
+                .map(prior -> prior.nextVersion(pblancId, snapshotOf(validHead)))
+                .orElseGet(() -> NoticeVersion.firstVersion(
+                        pblancId, SourceSystem.MYHOME_PORTAL, snapshotOf(validHead)));
 
         noticeVersionRepository.save(version);
-        saveSupplyLines(version, rows);
+        saveSupplyLines(version, validRows);
 
-        return previous.isPresent() ? new IngestReport(0, 1, 0, 0) : new IngestReport(1, 0, 0, 0);
+        IngestReport stored = previous.isPresent()
+                ? IngestReport.oneVersioned()
+                : IngestReport.oneCreated();
+        return stored.plus(rejectedRows);
+    }
+
+    private boolean validSupplyLine(MyHomeNoticeItem row) {
+        return row.houseSn() != null
+                && row.houseSn() > 0
+                && SourceValues.trimToNull(row.hsmpNm()) != null
+                && SourceValues.trimToNull(row.fullAdres()) != null
+                && rentalPolicy.hasValidPnu(row.pnu());
     }
 
     private Optional<NoticeVersion> findPrevious(MyHomeNoticeItem head) {

@@ -14,15 +14,17 @@ import test.domain.housing.HousingComplex;
 import test.domain.housing.HousingComplexRepository;
 import test.domain.housing.HousingProviderAgency;
 import test.domain.housing.HousingProviderAgencyRepository;
-import test.domain.housing.SupplyType;
 import test.domain.housing.UnitType;
 import test.domain.housing.UnitTypeRepository;
+import test.domain.ingest.ConstructionRentalPolicy;
 import test.domain.ingest.IngestReport;
+import test.domain.ingest.IngestRejectionReason;
 import test.domain.ingest.OpenApiClient;
 import test.domain.ingest.SourceValues;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 15110581 → HousingComplex + UnitType 적재.
@@ -44,15 +46,18 @@ public class MyHomeComplexIngestService {
     private final HousingComplexRepository complexRepository;
     private final UnitTypeRepository unitTypeRepository;
     private final HousingProviderAgencyRepository agencyRepository;
+    private final ConstructionRentalPolicy rentalPolicy;
 
     public MyHomeComplexIngestService(@Qualifier("myhomeComplexApiClient") OpenApiClient myhomeApiClient,
                                       HousingComplexRepository complexRepository,
                                       UnitTypeRepository unitTypeRepository,
-                                      HousingProviderAgencyRepository agencyRepository) {
+                                      HousingProviderAgencyRepository agencyRepository,
+                                      ConstructionRentalPolicy rentalPolicy) {
         this.myhomeApiClient = myhomeApiClient;
         this.complexRepository = complexRepository;
         this.unitTypeRepository = unitTypeRepository;
         this.agencyRepository = agencyRepository;
+        this.rentalPolicy = rentalPolicy;
     }
 
     /**
@@ -121,11 +126,14 @@ public class MyHomeComplexIngestService {
     private IngestReport applyOne(MyHomeComplexItem item) {
         if (item.hsmpSn() == null || SourceValues.trimToNull(item.rnAdres()) == null) {
             log.warn("단지 식별자나 주소가 없어 건너뜁니다: hsmpSn={}, {}", item.hsmpSn(), item.hsmpNm());
-            return new IngestReport(0, 0, 0, 1);
+            return IngestReport.oneRejected(IngestRejectionReason.MISSING_IDENTITY);
         }
-        // 건설임대만 담는다. 매입임대·전세임대는 지어진 단지가 아니라서 이 카탈로그의 전제와 안 맞는다.
-        if (SupplyType.isPurchasedOrJeonse(item.suplyTyNm()) || looksPurchased(item)) {
-            return new IngestReport(0, 0, 0, 1);
+        Optional<IngestRejectionReason> rejection = rentalPolicy.rejectComplex(
+                item.suplyTyNm(), item.houseTyNm(), item.competDe());
+        if (rejection.isPresent()) {
+            log.debug("단지 원천 행 제외: hsmpSn={}, supplyType={}, reason={}",
+                    item.hsmpSn(), item.suplyTyNm(), rejection.get());
+            return IngestReport.oneRejected(rejection.get());
         }
 
         String sourceComplexId = String.valueOf(item.hsmpSn());
@@ -152,28 +160,11 @@ public class MyHomeComplexIngestService {
         boolean unitTypeChanged = upsertUnitType(complex, item);
 
         if (isNew) {
-            return new IngestReport(1, 0, 0, 0);
+            return IngestReport.oneCreated();
         }
         return complexChanged || unitTypeChanged
-                ? new IngestReport(0, 1, 0, 0)
-                : new IngestReport(0, 0, 1, 0);
-    }
-
-    /**
-     * 공급유형은 건설임대인데 실제로는 매입임대인 행을 걸러낸다.
-     *
-     * <p>{@code suplyTyNm} 한 칸에 서로 다른 두 가지가 들어온다 — '매입임대'는 <b>어떻게 확보했나</b>이고
-     * '10년임대'·'장기전세'는 <b>어떤 조건으로 빌려주나</b>다. 사들인 집을 10년임대로 공급하면 둘 다 참이라
-     * 어느 쪽을 적을지가 기관마다 갈린다. 대구 노블힐즈4(hsmpSn 1058)는 같은 응답에 '장기전세' 5행과
-     * '매입임대' 1행이 같이 오고, 성남시 40단지는 hsmpNm 이 "매입임대주택"인데 suplyTyNm 은 '10년임대'다.
-     *
-     * <p>그래서 라벨 대신 지어진 흔적으로 가른다. <b>아파트가 아니면서 준공일도 없으면</b> 지어진 단지로 볼
-     * 근거가 없다. 매입임대 라벨 28,773행 중 준공일이 있는 건 2행(0.007%)뿐이라 이 반대 방향은 거의 비어 있고,
-     * 준공일이 있는 비아파트 건설임대(만부마을 행복주택, 평택이충 통합공공임대주택 등)는 그대로 남는다.
-     */
-    private boolean looksPurchased(MyHomeComplexItem item) {
-        return HouseType.from(item.houseTyNm()) != HouseType.APARTMENT
-                && SourceValues.trimToNull(item.competDe()) == null;
+                ? IngestReport.oneVersioned()
+                : IngestReport.oneUnchanged();
     }
 
     private HousingComplex newComplex(MyHomeComplexItem item, String sourceComplexId) {

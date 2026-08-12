@@ -14,6 +14,8 @@ import test.domain.housing.SupplyType;
 import test.domain.housing.UnitType;
 import test.domain.housing.UnitTypeRepository;
 import test.domain.ingest.IngestReport;
+import test.domain.ingest.IngestRejectionReason;
+import test.domain.ingest.ConstructionRentalPolicy;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -37,7 +39,7 @@ class MyHomeComplexIngestServiceTest {
     @BeforeEach
     void setUp() {
         service = new MyHomeComplexIngestService(
-                null, complexRepository, unitTypeRepository, agencyRepository);
+                null, complexRepository, unitTypeRepository, agencyRepository, new ConstructionRentalPolicy());
     }
 
     @Test
@@ -45,7 +47,8 @@ class MyHomeComplexIngestServiceTest {
     void skipsPurchasedAndJeonseRental() {
         IngestReport report = service.apply(MyHomeFixtures.purchasedComplexItems());
 
-        assertThat(report).isEqualTo(new IngestReport(0, 0, 0, 3));
+        assertThat(report.rejectedByReason())
+                .containsEntry(IngestRejectionReason.UNSUPPORTED_SUPPLY_TYPE, 3);
         assertThat(complexRepository.count()).isZero();
         assertThat(unitTypeRepository.count()).isZero();
     }
@@ -56,7 +59,19 @@ class MyHomeComplexIngestServiceTest {
         IngestReport report = service.apply(MyHomeFixtures.purchasedItemsUnderConstructedLabel());
 
         // 라벨은 10년임대·장기전세라 isPurchasedOrJeonse 로는 하나도 안 걸린다.
-        assertThat(report).isEqualTo(new IngestReport(0, 0, 0, 3));
+        assertThat(report.rejectedByReason())
+                .containsEntry(IngestRejectionReason.NOT_CONSTRUCTION_HOUSING, 3);
+        assertThat(complexRepository.count()).isZero();
+        assertThat(unitTypeRepository.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("처음 보는 공급유형은 아파트여도 자동 적재하지 않는다")
+    void rejectsUnknownSupplyType() {
+        IngestReport report = service.apply(MyHomeFixtures.unknownSupplyTypeComplexItems());
+
+        assertThat(report.rejectedByReason())
+                .containsEntry(IngestRejectionReason.UNKNOWN_SUPPLY_TYPE, 1);
         assertThat(complexRepository.count()).isZero();
         assertThat(unitTypeRepository.count()).isZero();
     }

@@ -214,6 +214,21 @@ final class MyHomeFixtures {
                 """, MyHomeComplexItem.class);
     }
 
+    /** 새 공급유형은 아파트여도 허용 목록에 올리기 전까지 자동 적재하지 않는다. */
+    static List<MyHomeComplexItem> unknownSupplyTypeComplexItems() {
+        return parse("""
+                {"response":{"body":{"item":[
+                  {"hsmpSn":39999999,"insttNm":"서울주택도시공사","brtcCode":"11","brtcNm":"서울특별시",
+                   "signguCode":"680","signguNm":"강남구","hsmpNm":"미등록 임대단지",
+                   "rnAdres":"서울특별시 강남구 테스트로 1","pnu":"1168010100100010001",
+                   "competDe":"20260101","hshldCo":10,"suplyTyNm":"청년안심주택","styleNm":"39A",
+                   "suplyPrvuseAr":39.0,"suplyCmnuseAr":15.0,"houseTyNm":"아파트",
+                   "heatMthdDetailNm":"지역난방","buldStleNm":"계단식","elvtrInstlAtNm":"전체동 설치",
+                   "parkngCo":10,"bassRentGtn":10000000,"bassMtRntchrg":100000,"bassCnvrsGtnLmt":0}
+                ]}}}
+                """, MyHomeComplexItem.class);
+    }
+
     /**
      * HWSPR02 — 원공고 20965(일반공고)와 그 정정공고 20989.
      * 응답 순서는 최신(정정공고)이 먼저다. 적재가 순서를 다시 잡는지 보려고 그대로 뒀다.
@@ -293,6 +308,53 @@ final class MyHomeFixtures {
                    "rentGtn":0,"enty":0,"prtpay":0,"surlus":0,"mtRntchrg":0,
                    "beginDe":"20260701","endDe":"20261231"}
                  ]}}}
+                """, MyHomeNoticeItem.class);
+    }
+
+    /** 행복주택 공고 안에 정상 공급행과 PNU가 깨진 공급행이 함께 온 경우. */
+    static List<MyHomeNoticeItem> noticeItemsWithInvalidSupplyLine() {
+        return parse("""
+                {"response":{"body":{"item":[
+                  {"pblancId":"30001","houseSn":1,"sttusNm":"일반공고","pblancNm":"행복주택 모집",
+                   "suplyInsttNm":"LH","houseTyNm":"아파트","suplyTyNm":"행복주택","beforePblancId":"",
+                   "rcritPblancDe":"20260801","przwnerPresnatnDe":"20261001","refrnc":"1600-1004",
+                   "url":"https://apply.lh.or.kr/?panId=valid","pcUrl":"https://myhome/1","mobileUrl":"https://m.myhome/1",
+                   "hsmpNm":"정상단지","brtcNm":"경기도","signguNm":"성남시","fullAdres":"경기도 성남시 테스트로 1",
+                   "rnCodeNm":"테스트로","refrnLegaldongNm":"테스트동","pnu":"4113111600104160001",
+                   "heatMthdNm":"지역난방","totHshldCo":"100","sumSuplyCo":10,"rentGtn":10000000,
+                   "enty":1000000,"surlus":9000000,"mtRntchrg":100000,"beginDe":"20260810","endDe":"20260812"},
+                  {"pblancId":"30001","houseSn":2,"sttusNm":"일반공고","pblancNm":"행복주택 모집",
+                   "suplyInsttNm":"LH","houseTyNm":"아파트","suplyTyNm":"행복주택","beforePblancId":"",
+                   "rcritPblancDe":"20260801","przwnerPresnatnDe":"20261001","refrnc":"1600-1004",
+                   "url":"https://apply.lh.or.kr/?panId=valid","pcUrl":"https://myhome/2","mobileUrl":"https://m.myhome/2",
+                   "hsmpNm":"깨진단지","brtcNm":"경기도","signguNm":"성남시","fullAdres":"경기도 성남시 테스트로 2",
+                   "pnu":"INVALID","sumSuplyCo":5,"rentGtn":10000000,"enty":1000000,"surlus":9000000,
+                   "mtRntchrg":100000,"beginDe":"20260810","endDe":"20260812"}
+                ]}}}
+                """, MyHomeNoticeItem.class);
+    }
+
+    /** 공급유형은 허용되지만 대상 주택을 식별할 수 없는 공고. */
+    static List<MyHomeNoticeItem> constructionNoticeWithoutValidSupplyLine() {
+        return parse("""
+                {"response":{"body":{"item":[
+                  {"pblancId":"30002","houseSn":0,"sttusNm":"일반공고","pblancNm":"행복주택 모집",
+                   "suplyInsttNm":"LH","houseTyNm":"아파트","suplyTyNm":"행복주택","beforePblancId":"",
+                   "rcritPblancDe":"20260801","przwnerPresnatnDe":"20261001","refrnc":"1600-1004",
+                   "url":"https://apply.lh.or.kr/?panId=invalid","hsmpNm":"","fullAdres":"","pnu":"",
+                   "sumSuplyCo":5,"beginDe":"20260810","endDe":"20260812"}
+                ]}}}
+                """, MyHomeNoticeItem.class);
+    }
+
+    /** 원천 공고 ID가 빠져 어떤 aggregate에도 넣을 수 없는 행. */
+    static List<MyHomeNoticeItem> noticeItemWithoutIdentity() {
+        return parse("""
+                {"response":{"body":{"item":[
+                  {"pblancId":"","houseSn":1,"sttusNm":"일반공고","pblancNm":"행복주택 모집",
+                   "suplyInsttNm":"LH","houseTyNm":"아파트","suplyTyNm":"행복주택",
+                   "hsmpNm":"정상단지","fullAdres":"경기도 성남시 테스트로 1","pnu":"4113111600104160001"}
+                ]}}}
                 """, MyHomeNoticeItem.class);
     }
 
