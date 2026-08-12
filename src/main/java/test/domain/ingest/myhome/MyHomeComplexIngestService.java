@@ -63,6 +63,7 @@ public class MyHomeComplexIngestService {
     private final HousingProviderAgencyRepository agencyRepository;
     private final ConstructionRentalPolicy rentalPolicy;
     private final TransactionTemplate transactionTemplate;
+    private final MyHomeRegionCatalog regionCatalog;
 
     public MyHomeComplexIngestService(@Qualifier("myhomeComplexApiClient") OpenApiClient myhomeApiClient,
                                       HousingComplexRepository complexRepository,
@@ -70,7 +71,8 @@ public class MyHomeComplexIngestService {
                                       UnitTypeRepository unitTypeRepository,
                                       HousingProviderAgencyRepository agencyRepository,
                                       ConstructionRentalPolicy rentalPolicy,
-                                      PlatformTransactionManager transactionManager) {
+                                      PlatformTransactionManager transactionManager,
+                                      MyHomeRegionCatalog regionCatalog) {
         this.myhomeApiClient = myhomeApiClient;
         this.complexRepository = complexRepository;
         this.programRepository = programRepository;
@@ -79,6 +81,7 @@ public class MyHomeComplexIngestService {
         this.rentalPolicy = rentalPolicy;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.regionCatalog = regionCatalog;
     }
 
     /**
@@ -130,6 +133,57 @@ public class MyHomeComplexIngestService {
             log.info("지역 {}/{} 완료 ({}) — 누적 {}", ++done, regionCodes.size(), regionCode, report);
         }
         return report;
+    }
+
+    /**
+     * {@link MyHomeRegionCatalog} 의 공식 256개 시군구를 전부 돈다.
+     *
+     * <p>지역 하나는 {@link #ingestRegion} 이 페이지를 전부 모은 뒤에야 저장하므로,
+     * 한 지역의 부분 실패가 다른 지역에 영향을 주지 않는다.
+     */
+    public IngestReport ingestNationwide(int pageSize, int maxPages) {
+        IngestReport report = IngestReport.empty();
+        for (MyHomeRegion region : regionCatalog.all()) {
+            report = report.plus(ingestRegion(region, pageSize, maxPages));
+        }
+        return report;
+    }
+
+    /**
+     * 한 지역의 모든 페이지를 메모리에 모은 뒤에만 {@link #apply} 로 저장한다.
+     *
+     * <p>중간 페이지가 비거나(더 받을 게 없음) numOfRows 보다 짧으면(마지막 페이지) 그 시점까지 모은
+     * 행을 저장한다. maxPages 안에 끝나지 않거나 HTTP 호출이 실패하면 그 지역은 아무것도 저장하지 않고
+     * {@link IngestReport#oneFailed()} 로 남기며, 전국 순회는 다음 지역으로 계속된다.
+     */
+    IngestReport ingestRegion(MyHomeRegion region, int pageSize, int maxPages) {
+        List<MyHomeComplexItem> completeRows = new ArrayList<>();
+        try {
+            for (int page = 1; page <= maxPages; page++) {
+                List<MyHomeComplexItem> rows = fetchPage(region, page, pageSize);
+                if (rows.isEmpty()) {
+                    return apply(completeRows);
+                }
+                completeRows.addAll(rows);
+                if (rows.size() < pageSize) {
+                    return apply(completeRows);
+                }
+            }
+            log.warn("단지 지역 조회가 maxPages 안에 끝나지 않음: region={}", region.fullCode());
+            return IngestReport.oneFailed();
+        } catch (RuntimeException exception) {
+            log.warn("단지 지역 조회 실패: region={}", region.fullCode(), exception);
+            return IngestReport.oneFailed();
+        }
+    }
+
+    private List<MyHomeComplexItem> fetchPage(MyHomeRegion region, int page, int pageSize) {
+        MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
+        params.add("brtcCode", region.brtcCode());
+        params.add("signguCode", region.signguCode());
+        params.add("numOfRows", String.valueOf(pageSize));
+        params.add("pageNo", String.valueOf(page));
+        return myhomeApiClient.getList(PATH, params, LIST_POINTER, MyHomeComplexItem.class);
     }
 
     /**

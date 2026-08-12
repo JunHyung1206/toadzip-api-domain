@@ -151,7 +151,7 @@ class MyHomeNoticeIngestServiceTest {
     @DisplayName("이미 적재된 단지가 있으면 PNU로 공급행에 붙는다")
     void attachesComplexByPnu() {
         new MyHomeComplexIngestService(null, complexRepository, programRepository, unitTypeRepository,
-                agencyRepository, new ConstructionRentalPolicy(), transactionManager)
+                agencyRepository, new ConstructionRentalPolicy(), transactionManager, new MyHomeRegionCatalog())
                 .apply(MyHomeFixtures.constructedComplexItems());
         long complexCountBefore = complexRepository.count();
 
@@ -275,7 +275,7 @@ class MyHomeNoticeIngestServiceTest {
 
         // 공고의 PNU 를 가진 단지가 뒤늦게 들어온다.
         new MyHomeComplexIngestService(null, complexRepository, programRepository, unitTypeRepository,
-                agencyRepository, new ConstructionRentalPolicy(), transactionManager)
+                agencyRepository, new ConstructionRentalPolicy(), transactionManager, new MyHomeRegionCatalog())
                 .apply(MyHomeFixtures.complexItemsMatchingNotice());
 
         // 공급행 3개(구리 2 + 남양주 1)가 단지 2개에 붙는다.

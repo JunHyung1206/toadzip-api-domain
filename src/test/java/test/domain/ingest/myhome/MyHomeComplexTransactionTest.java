@@ -60,7 +60,7 @@ class MyHomeComplexTransactionTest {
 
         MyHomeComplexIngestService service = new MyHomeComplexIngestService(
                 null, complexRepository, programRepository, failingOnFirstComplex, agencyRepository,
-                new ConstructionRentalPolicy(), transactionManager);
+                new ConstructionRentalPolicy(), transactionManager, new MyHomeRegionCatalog());
 
         IngestReport report = service.apply(MyHomeFixtures.itemsForTwoComplexesOneFailing());
 

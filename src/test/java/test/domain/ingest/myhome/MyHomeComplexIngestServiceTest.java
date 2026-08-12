@@ -63,7 +63,7 @@ class MyHomeComplexIngestServiceTest {
         });
         service = new MyHomeComplexIngestService(
                 null, complexRepository, programRepository, unitTypeRepository, agencyRepository,
-                new ConstructionRentalPolicy(), transactionManager);
+                new ConstructionRentalPolicy(), transactionManager, new MyHomeRegionCatalog());
     }
 
     @Test
