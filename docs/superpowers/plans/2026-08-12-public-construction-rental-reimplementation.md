@@ -31,7 +31,7 @@
 - Create: `src/test/java/test/domain/ingest/myhome/MyHomeRentalTypeTest.java`
 - Create: `src/test/java/test/domain/ingest/myhome/MyHomeRegionCatalogTest.java`
 
-- [ ] **Step 1: 허용 요청 코드가 정확히 여덟 개인 실패 테스트 작성**
+- [x] **Step 1: 허용 요청 코드가 정확히 여덟 개인 실패 테스트 작성**
 
 ```java
 @Test
@@ -50,13 +50,13 @@ void mapsResponseLabelsToDomainTypes() {
 }
 ```
 
-- [ ] **Step 2: 테스트를 실행해 새 타입 부재로 실패하는지 확인**
+- [x] **Step 2: 테스트를 실행해 새 타입 부재로 실패하는지 확인**
 
 Run: `./gradlew test --tests test.domain.ingest.myhome.MyHomeRentalTypeTest`
 
 Expected: `MyHomeRentalType` 심볼을 찾지 못해 컴파일 실패.
 
-- [ ] **Step 3: API 코드 체계를 도메인 enum과 분리해 구현**
+- [x] **Step 3: API 코드 체계를 도메인 enum과 분리해 구현**
 
 ```java
 public enum MyHomeRentalType {
@@ -102,7 +102,7 @@ public enum MyHomeRentalType {
 }
 ```
 
-- [ ] **Step 4: 공식 XLSX를 버전 관리 CSV로 옮기고 256개 검증 테스트 작성**
+- [x] **Step 4: 공식 XLSX를 버전 관리 CSV로 옮기고 256개 검증 테스트 작성**
 
 공식 파일은 `https://www.data.go.kr/cmm/cmm/fileDownload.do?atchFileId=FILE_000000003675527&fileDetailSn=1`에서 받은 2026-07-01 코드표다. `/private/tmp/public_rental_complex_codes_260701.xlsx`로 내려받고 `shasum -a 256` 결과가 `3c60e6cb75c55ca8a4e601a47f37b4dff6d797c96a57780f759b97f512c6d761`인지 확인한다. Codex workspace dependency runtime의 spreadsheet Python과 `openpyxl.load_workbook("/private/tmp/public_rental_complex_codes_260701.xlsx", read_only=True, data_only=True)`를 사용해 광역 코드, 시군구 코드, 광역명, 시군구명 네 열을 다음 형식으로 내보낸다. 변환 스크립트는 일회성이므로 `/private/tmp/extract_myhome_regions.py`에 두고 저장소에는 CSV만 추가한다.
 
@@ -137,7 +137,7 @@ void preservesFixedWidthCodesAndReturnsAnImmutableList() {
 }
 ```
 
-- [ ] **Step 5: 지역 값 객체와 classpath loader 구현**
+- [x] **Step 5: 지역 값 객체와 classpath loader 구현**
 
 ```java
 public record MyHomeRegion(String brtcCode, String signguCode, String brtcName, String signguName) {
@@ -158,7 +158,7 @@ public record MyHomeRegion(String brtcCode, String signguCode, String brtcName, 
 
 `MyHomeRegionCatalog`은 애플리케이션 시작 시 CSV를 UTF-8로 한 번 읽고, 헤더를 제외한 256행을 `List.copyOf`로 보존한다. 열 수가 4가 아니거나 `fullCode`가 중복되거나 행 수가 256이 아니면 `IllegalStateException`으로 시작을 중단한다.
 
-- [ ] **Step 6: 두 테스트를 통과시키고 커밋**
+- [x] **Step 6: 두 테스트를 통과시키고 커밋**
 
 Run: `./gradlew test --tests 'test.domain.ingest.myhome.MyHomeRentalTypeTest' --tests 'test.domain.ingest.myhome.MyHomeRegionCatalogTest'`
 
