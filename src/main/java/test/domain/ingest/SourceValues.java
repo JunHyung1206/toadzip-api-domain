@@ -1,6 +1,7 @@
 package test.domain.ingest;
 
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 
@@ -8,6 +9,9 @@ import java.time.format.DateTimeParseException;
 public final class SourceValues {
 
     private static final DateTimeFormatter COMPACT_DATE = DateTimeFormatter.ofPattern("yyyyMMdd");
+    private static final DateTimeFormatter DOTTED_DATE = DateTimeFormatter.ofPattern("yyyy.MM.dd");
+    private static final DateTimeFormatter COMPACT_YEAR_MONTH = DateTimeFormatter.ofPattern("yyyyMM");
+    private static final DateTimeFormatter DOTTED_YEAR_MONTH = DateTimeFormatter.ofPattern("yyyy.MM");
     private static final int EARLIEST_COMPLETION_YEAR = 1900;
     private static final int LATEST_COMPLETION_YEAR = 2100;
 
@@ -21,14 +25,29 @@ public final class SourceValues {
         return raw.strip();
     }
 
-    /** "20260701" → 2026-07-01. 빈 값이거나 형식이 깨졌으면 null. */
+    /** "20260701", "2026.07.01" → 2026-07-01. 빈 값이거나 형식이 깨졌으면 null. */
     public static LocalDate toDate(String raw) {
         String value = trimToNull(raw);
         if (value == null) {
             return null;
         }
         try {
-            return LocalDate.parse(value, COMPACT_DATE);
+            DateTimeFormatter formatter = value.contains(".") ? DOTTED_DATE : COMPACT_DATE;
+            return LocalDate.parse(value, formatter);
+        } catch (DateTimeParseException e) {
+            return null;
+        }
+    }
+
+    /** "202711", "2027.11" → 2027-11. 빈 값이거나 형식이 깨졌으면 null. */
+    public static YearMonth toYearMonth(String raw) {
+        String value = trimToNull(raw);
+        if (value == null) {
+            return null;
+        }
+        try {
+            DateTimeFormatter formatter = value.contains(".") ? DOTTED_YEAR_MONTH : COMPACT_YEAR_MONTH;
+            return YearMonth.parse(value, formatter);
         } catch (DateTimeParseException e) {
             return null;
         }

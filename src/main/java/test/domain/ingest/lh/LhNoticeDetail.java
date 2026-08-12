@@ -31,6 +31,44 @@ public final class LhNoticeDetail {
     ) {
     }
 
+    /** {@code dsSplScdl} — 서류 제출과 계약 일정. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Schedule(
+            @JsonProperty("SBD_LGO_NM") String complexName,
+            @JsonProperty("ACP_DTTM") String applicationPeriod,
+            @JsonProperty("PPR_SBM_OPE_ANC_DT") String documentTargetAnnouncementDate,
+            @JsonProperty("PPR_ACP_ST_DT") String documentSubmissionBeginDate,
+            @JsonProperty("PPR_ACP_CLSG_DT") String documentSubmissionEndDate,
+            @JsonProperty("CTRT_ST_DT") String contractBeginDate,
+            @JsonProperty("CTRT_ED_DT") String contractEndDate
+    ) {
+    }
+
+    /** {@code dsCtrtPlc} — 방문 접수처와 운영 안내. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Reception(
+            @JsonProperty("CTRT_PLC_ADR") String address,
+            @JsonProperty("CTRT_PLC_DTL_ADR") String detailAddress,
+            @JsonProperty("TSK_ST_DTTM") String operationBegin,
+            @JsonProperty("TSK_ED_DTTM") String operationEnd,
+            @JsonProperty("SIL_OFC_TLNO") String phone,
+            @JsonProperty("SIL_OFC_GUD_FCTS") String guidance
+    ) {
+    }
+
+    /** {@code dsSbd} — 해당 공고 시점의 단지 정보. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record ComplexSnapshot(
+            @JsonProperty("LCC_NT_NM") String complexName,
+            @JsonProperty("LGDN_ADR") String lotAddress,
+            @JsonProperty("LGDN_DTL_ADR") String lotDetailAddress,
+            @JsonProperty("HSH_CNT") String totalUnitCount,
+            @JsonProperty("HTN_FMLA_DESC") String heatingDescription,
+            @JsonProperty("DDO_AR") String exclusiveAreaRange,
+            @JsonProperty("MVIN_XPC_YM") String expectedMoveInYearMonth
+    ) {
+    }
+
     /** {@code dsAhflInfo} — 공고문 원문 등. 65건 전부 hwp·PDF 를 준다. */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record NoticeFile(
