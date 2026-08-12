@@ -18,8 +18,11 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
- * {@link NoticeHousingLhMatchService} 테스트용 fixture. 파주운정·부천옥길처럼 실제로 있는 단지명과
- * 주소 모양을 그대로 써서, 후보명 "A", "B" 로는 드러나지 않는 접두어·순서 문제를 잡으려 한다.
+ * {@link NoticeHousingLhMatchService} 테스트용 fixture. 파주운정·부천옥길처럼 실제로 있는 단지명을 써서,
+ * 후보명 "A", "B" 로는 드러나지 않는 접두어·순서 문제를 잡으려 한다.
+ *
+ * <p>단지명 여섯 개(산내마을1단지 등)만 설계 문서에 실제로 등장한 값이다. 도로명·번지·세대수는
+ * 원천 공개 데이터가 아니라 접두어·모호성 시나리오를 재현하기 위해 임의로 구성한 값이다.
  */
 class MatchingFixtures {
 
