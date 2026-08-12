@@ -5,6 +5,7 @@ import org.springframework.context.annotation.Configuration;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Clock;
+import java.time.ZoneId;
 
 @Configuration
 public class IngestConfig {
@@ -12,7 +13,7 @@ public class IngestConfig {
     /** 적재 시각(fetchedAt) 등에 쓴다. 테스트는 고정 Clock 을 직접 만들어 넣는다. */
     @Bean
     public Clock clock() {
-        return Clock.systemDefaultZone();
+        return Clock.system(ZoneId.of("Asia/Seoul"));
     }
 
     @Bean
