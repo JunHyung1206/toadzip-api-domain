@@ -44,15 +44,17 @@ class ConstructionRentalPolicyTest {
     }
 
     @Test
-    @DisplayName("허용 유형이어도 아파트가 아니고 정상 준공일도 없으면 건설형 주택이 아니다")
-    void requiresConstructionEvidenceForComplexes() {
-        assertThat(policy.rejectComplex("10년임대", "다세대주택", ""))
-                .contains(IngestRejectionReason.NOT_CONSTRUCTION_HOUSING);
-        assertThat(policy.rejectComplex("10년임대", "다세대주택", "00201110"))
-                .contains(IngestRejectionReason.NOT_CONSTRUCTION_HOUSING);
+    @DisplayName("아파트가 아니고 준공일도 없으면 건설 흔적이 없다")
+    void hasNoConstructionEvidenceWithoutApartmentOrCompletionDate() {
+        assertThat(policy.hasConstructionEvidence("다세대주택", "")).isFalse();
+        assertThat(policy.hasConstructionEvidence("다세대주택", null)).isFalse();
+    }
 
-        assertThat(policy.rejectComplex("10년임대", "아파트", "")).isEmpty();
-        assertThat(policy.rejectComplex("행복주택", "다세대주택", "20201230")).isEmpty();
+    @Test
+    @DisplayName("아파트거나 준공일이 있으면 건설 흔적이 있다")
+    void hasConstructionEvidenceWhenApartmentOrCompletionDatePresent() {
+        assertThat(policy.hasConstructionEvidence("아파트", "")).isTrue();
+        assertThat(policy.hasConstructionEvidence("다세대주택", "20201230")).isTrue();
     }
 
     @Test

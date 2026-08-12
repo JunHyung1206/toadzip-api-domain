@@ -5,6 +5,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import test.domain.housing.ComplexRentalProgram;
 import test.domain.housing.ComplexRentalProgramRepository;
 import test.domain.housing.HeatingType;
@@ -26,7 +29,12 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** 15110581 실제 응답 모양 그대로 태운다. HTTP만 빠져 있다. */
+/**
+ * 15110581 실제 응답 모양 그대로 태운다. HTTP만 빠져 있다.
+ *
+ * <p>단지 저장이 REQUIRES_NEW 로 커밋되어 {@code @DataJpaTest} 기본 롤백을 우회하므로,
+ * 테스트 사이에 남는 데이터를 매번 별도 트랜잭션으로 직접 비운다.
+ */
 @DataJpaTest
 class MyHomeComplexIngestServiceTest {
 
@@ -38,14 +46,24 @@ class MyHomeComplexIngestServiceTest {
     private UnitTypeRepository unitTypeRepository;
     @Autowired
     private HousingProviderAgencyRepository agencyRepository;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     private MyHomeComplexIngestService service;
 
     @BeforeEach
     void setUp() {
+        TransactionTemplate cleanup = new TransactionTemplate(transactionManager);
+        cleanup.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        cleanup.executeWithoutResult(status -> {
+            unitTypeRepository.deleteAll();
+            programRepository.deleteAll();
+            complexRepository.deleteAll();
+            agencyRepository.deleteAll();
+        });
         service = new MyHomeComplexIngestService(
                 null, complexRepository, programRepository, unitTypeRepository, agencyRepository,
-                new ConstructionRentalPolicy());
+                new ConstructionRentalPolicy(), transactionManager);
     }
 
     @Test
@@ -200,24 +218,66 @@ class MyHomeComplexIngestServiceTest {
     }
 
     @Test
-    @DisplayName("같은 응답을 다시 읽으면 아무것도 쓰지 않고 unchanged 로 보고한다")
+    @DisplayName("같은 응답을 다시 읽으면 아무것도 쓰지 않고 단지 하나를 unchanged 로 보고한다")
     void isIdempotent() {
         service.apply(MyHomeFixtures.constructedComplexItems());
 
         IngestReport second = service.apply(MyHomeFixtures.constructedComplexItems());
 
-        assertThat(second).isEqualTo(new IngestReport(0, 0, 5, 0, Map.of()));
+        assertThat(second).isEqualTo(new IngestReport(0, 0, 1, 0, Map.of()));
         assertThat(complexRepository.count()).isEqualTo(1);
         assertThat(unitTypeRepository.count()).isEqualTo(5);
     }
 
     @Test
-    @DisplayName("공급유형별로 세대수가 갈리는 단지도 다시 읽으면 unchanged 다")
+    @DisplayName("공급유형별로 세대수가 갈리는 단지도 다시 읽으면 단지 하나를 unchanged 로 보고한다")
     void doesNotChurnOnSplitUnitCounts() {
         service.apply(MyHomeFixtures.complexItemsWithTwoSupplyTypes());
 
         IngestReport second = service.apply(MyHomeFixtures.complexItemsWithTwoSupplyTypes());
 
-        assertThat(second).isEqualTo(new IngestReport(0, 0, 2, 0, Map.of()));
+        assertThat(second).isEqualTo(new IngestReport(0, 0, 1, 0, Map.of()));
+    }
+
+    @Test
+    @DisplayName("공급유형이 갈리는 행은 그룹핑 전에 걸러져 나머지 행만 프로그램이 된다")
+    void filtersUnsupportedRowsBeforeCreatingPrograms() {
+        IngestReport report = service.apply(MyHomeFixtures.itemsForOneComplex("국민임대", "매입임대"));
+
+        assertThat(report.rejectedByReason())
+                .containsEntry(IngestRejectionReason.UNSUPPORTED_SUPPLY_TYPE, 1);
+        assertThat(programRepository.findAll()).extracting(ComplexRentalProgram::getSupplyTypeName)
+                .containsExactly("국민임대");
+    }
+
+    @Test
+    @DisplayName("허용 행 중 하나라도 건설 흔적이 있으면 단지 전체를 담는다")
+    void acceptsWholeComplexWhenAnyAllowedRowHasConstructionEvidence() {
+        IngestReport report = service.apply(MyHomeFixtures.rowsWithApartmentEvidenceOnlyOnSecondRow());
+
+        assertThat(report.created()).isOne();
+        assertThat(complexRepository.count()).isOne();
+        assertThat(unitTypeRepository.count()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("같은 단지 안에서 도로명주소가 갈리면 단지 전체를 제외한다")
+    void rejectsWholeComplexWhenNonBlankAddressesConflict() {
+        IngestReport report = service.apply(MyHomeFixtures.rowsWithConflictingRoadAddresses());
+
+        assertThat(report.rejectedByReason())
+                .containsEntry(IngestRejectionReason.INVALID_SOURCE_ROW, 1);
+        assertThat(complexRepository.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("세대수가 갈리는 프로그램만 제외하고 나머지 프로그램은 담는다")
+    void rejectsOnlyProgramWhoseNonNullUnitCountsConflict() {
+        IngestReport report = service.apply(MyHomeFixtures.rowsWithOneConflictingAndOneValidProgram());
+
+        assertThat(report.rejectedByReason())
+                .containsEntry(IngestRejectionReason.INVALID_SOURCE_ROW, 1);
+        assertThat(programRepository.findAll()).extracting(ComplexRentalProgram::getSupplyTypeName)
+                .containsExactly("행복주택");
     }
 }

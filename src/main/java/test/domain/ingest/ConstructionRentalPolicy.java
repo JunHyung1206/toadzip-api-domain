@@ -23,20 +23,9 @@ public class ConstructionRentalPolicy {
         return Optional.empty();
     }
 
-    public Optional<IngestRejectionReason> rejectComplex(String supplyTypeLabel,
-                                                          String houseTypeLabel,
-                                                          String completionDate) {
-        Optional<IngestRejectionReason> supplyTypeRejection = rejectSupplyType(supplyTypeLabel);
-        if (supplyTypeRejection.isPresent()) {
-            return supplyTypeRejection;
-        }
-
-        boolean apartment = HouseType.from(houseTypeLabel) == HouseType.APARTMENT;
-        boolean completed = SourceValues.toDate(completionDate) != null
-                && SourceValues.completionYear(completionDate) != null;
-        return apartment || completed
-                ? Optional.empty()
-                : Optional.of(IngestRejectionReason.NOT_CONSTRUCTION_HOUSING);
+    public boolean hasConstructionEvidence(String houseTypeLabel, String completionDate) {
+        return HouseType.from(houseTypeLabel) == HouseType.APARTMENT
+                || SourceValues.toDate(completionDate) != null;
     }
 
     public boolean hasValidPnu(String raw) {

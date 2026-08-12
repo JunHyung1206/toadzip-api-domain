@@ -5,6 +5,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -374,6 +375,59 @@ final class MyHomeFixtures {
                    "hsmpNm":"정상단지","fullAdres":"경기도 성남시 테스트로 1","pnu":"4113111600104160001"}
                 ]}}}
                 """, MyHomeNoticeItem.class);
+    }
+
+    /**
+     * hsmpSn aggregate 검증 경계를 하나씩 짚어 보려고 합성한 행이다(실 원천 응답이 아니다).
+     * 주소·기관·PNU 등 검증과 무관한 값은 고정해 두고 시나리오별로 필요한 값만 바꾼다.
+     */
+    private static MyHomeComplexItem complexItem(long hsmpSn, String rnAdres, String suplyTyNm,
+                                                  String houseTyNm, String competDe,
+                                                  Integer hshldCo, String styleNm) {
+        return new MyHomeComplexItem(
+                hsmpSn, "테스트기관", "11", "서울특별시", "680", "강남구", "테스트단지",
+                rnAdres, "1168010600100000000", competDe, hshldCo, suplyTyNm, styleNm,
+                new BigDecimal("39.00"), new BigDecimal("15.00"), houseTyNm,
+                "지역난방", "계단식", "전체동 설치", 100, 10_000_000L, 100_000L, 0L);
+    }
+
+    /** 공급유형이 갈리는 원천 행 둘. 두 번째 행은 비지원 유형이라 그룹핑 전에 걸러진다. */
+    static List<MyHomeComplexItem> itemsForOneComplex(String allowedSupplyType, String unsupportedSupplyType) {
+        String address = "서울특별시 강남구 테스트로 1";
+        return List.of(
+                complexItem(90001L, address, allowedSupplyType, "아파트", "20200101", 10, "50A"),
+                complexItem(90001L, address, unsupportedSupplyType, "아파트", "20200101", 10, "50B"));
+    }
+
+    /** 첫 행은 아파트도 준공일도 없고, 둘째 행에만 아파트 흔적이 있다. 단지 전체는 건설흔적 있음으로 통과한다. */
+    static List<MyHomeComplexItem> rowsWithApartmentEvidenceOnlyOnSecondRow() {
+        String address = "서울특별시 강남구 테스트로 2";
+        return List.of(
+                complexItem(90002L, address, "국민임대", "다세대주택", "", 10, "50A"),
+                complexItem(90002L, address, "국민임대", "아파트", "", 10, "50B"));
+    }
+
+    /** 같은 hsmpSn 인데 도로명주소가 행마다 다르다. */
+    static List<MyHomeComplexItem> rowsWithConflictingRoadAddresses() {
+        return List.of(
+                complexItem(90003L, "서울특별시 강남구 테스트로 3", "국민임대", "아파트", "20200101", 10, "50A"),
+                complexItem(90003L, "서울특별시 강남구 테스트로 3-1", "국민임대", "아파트", "20200101", 10, "50B"));
+    }
+
+    /** 국민임대는 세대수가 갈리고, 행복주택은 일관된다. 국민임대 프로그램만 제외되어야 한다. */
+    static List<MyHomeComplexItem> rowsWithOneConflictingAndOneValidProgram() {
+        String address = "서울특별시 강남구 테스트로 4";
+        return List.of(
+                complexItem(90004L, address, "국민임대", "아파트", "20200101", 10, "50A"),
+                complexItem(90004L, address, "국민임대", "아파트", "20200101", 20, "50B"),
+                complexItem(90004L, address, "행복주택", "아파트", "20200101", 30, "60A"));
+    }
+
+    /** hsmpSn 을 독립 트랜잭션 경계로 검증하려고 만든 단지 둘. 첫 번째만 저장 실패를 유도하는 테스트에서 쓰인다. */
+    static List<MyHomeComplexItem> itemsForTwoComplexesOneFailing() {
+        return List.of(
+                complexItem(40001L, "서울특별시 강남구 테스트로 5", "국민임대", "아파트", "20200101", 10, "70A"),
+                complexItem(40002L, "서울특별시 강남구 테스트로 6", "국민임대", "아파트", "20200101", 10, "70B"));
     }
 
     private static <T> List<T> parse(String json, Class<T> type) {
