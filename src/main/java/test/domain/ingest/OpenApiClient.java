@@ -23,7 +23,8 @@ public class OpenApiClient {
     /** 국토부 계열은 자료 없음을 오류코드로 준다. 빈 페이지일 뿐이라 예외로 올리지 않는다. */
     private static final String MOLIT_NO_DATA = "03";
     private static final String MOLIT_SUCCESS = "00";
-    private static final String LH_SUCCESS = "00";
+    /** LH 는 성공을 "Y" 로 준다. 공고문·공고상세 두 오퍼레이션에서 모두 확인했다. */
+    private static final String LH_SUCCESS = "Y";
 
     private final RestClient restClient = RestClient.create();
     private final ObjectMapper objectMapper;

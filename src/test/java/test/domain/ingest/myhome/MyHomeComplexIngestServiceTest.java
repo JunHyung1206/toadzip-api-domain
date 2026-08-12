@@ -20,6 +20,7 @@ import test.domain.ingest.ConstructionRentalPolicy;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -58,7 +59,7 @@ class MyHomeComplexIngestServiceTest {
     void skipsPurchasedRentalWearingConstructedLabel() {
         IngestReport report = service.apply(MyHomeFixtures.purchasedItemsUnderConstructedLabel());
 
-        // 라벨은 10년임대·장기전세라 isPurchasedOrJeonse 로는 하나도 안 걸린다.
+        // 라벨은 허용 대상이지만 건설 흔적이 없어 두 번째 경계에서 걸린다.
         assertThat(report.rejectedByReason())
                 .containsEntry(IngestRejectionReason.NOT_CONSTRUCTION_HOUSING, 3);
         assertThat(complexRepository.count()).isZero();
@@ -82,7 +83,7 @@ class MyHomeComplexIngestServiceTest {
         IngestReport report = service.apply(MyHomeFixtures.constructedMultiplexItems());
 
         assertThat(report.created()).isEqualTo(1);
-        assertThat(report.skipped()).isZero();
+        assertThat(report.rejected()).isZero();
         HousingComplex complex = complexRepository.findAll().get(0);
         assertThat(complex.getName()).isEqualTo("만부마을 행복주택");
         assertThat(complex.getHouseType()).isEqualTo(HouseType.MULTIPLEX_HOUSE);
@@ -96,7 +97,7 @@ class MyHomeComplexIngestServiceTest {
         IngestReport report = service.apply(MyHomeFixtures.constructedComplexItems());
 
         assertThat(report.created()).isEqualTo(1);
-        assertThat(report.skipped()).isZero();
+        assertThat(report.rejected()).isZero();
         assertThat(complexRepository.count()).isEqualTo(1);
         assertThat(unitTypeRepository.count()).isEqualTo(5);
     }
@@ -187,10 +188,9 @@ class MyHomeComplexIngestServiceTest {
         assertThat(HouseType.from("생활숙박시설")).isNull();
         assertThat(SupplyType.from("행복주택")).isEqualTo(SupplyType.HAPPY_HOUSE);
         assertThat(HouseType.from("다세대주택")).isEqualTo(HouseType.MULTIPLEX_HOUSE);
-        // 모르는 값은 매입·전세임대가 아니므로 걸러지지 않는다.
-        assertThat(SupplyType.isPurchasedOrJeonse("청년안심주택")).isFalse();
-        assertThat(SupplyType.isPurchasedOrJeonse("매입임대")).isTrue();
-        assertThat(SupplyType.isPurchasedOrJeonse("전세임대")).isTrue();
+        assertThat(SupplyType.NATIONAL_RENTAL.isConstructionRental()).isTrue();
+        assertThat(SupplyType.PURCHASED_RENTAL.isConstructionRental()).isFalse();
+        assertThat(SupplyType.JEONSE_RENTAL.isConstructionRental()).isFalse();
     }
 
     @Test
@@ -200,7 +200,7 @@ class MyHomeComplexIngestServiceTest {
 
         IngestReport second = service.apply(MyHomeFixtures.constructedComplexItems());
 
-        assertThat(second).isEqualTo(new IngestReport(0, 0, 5, 0));
+        assertThat(second).isEqualTo(new IngestReport(0, 0, 5, 0, Map.of()));
         assertThat(complexRepository.count()).isEqualTo(1);
         assertThat(unitTypeRepository.count()).isEqualTo(5);
     }
@@ -212,6 +212,6 @@ class MyHomeComplexIngestServiceTest {
 
         IngestReport second = service.apply(MyHomeFixtures.complexItemsWithTwoSupplyTypes());
 
-        assertThat(second).isEqualTo(new IngestReport(0, 0, 2, 0));
+        assertThat(second).isEqualTo(new IngestReport(0, 0, 2, 0, Map.of()));
     }
 }

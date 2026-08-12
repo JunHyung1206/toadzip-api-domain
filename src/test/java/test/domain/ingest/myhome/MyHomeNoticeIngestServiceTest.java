@@ -22,6 +22,7 @@ import test.domain.notice.SupplyLineRepository;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -54,7 +55,7 @@ class MyHomeNoticeIngestServiceTest {
     void linksCorrectionToOriginalChain() {
         IngestReport report = service.apply(MyHomeFixtures.noticeItems());
 
-        assertThat(report).isEqualTo(new IngestReport(1, 1, 0, 0));
+        assertThat(report).isEqualTo(new IngestReport(1, 1, 0, 0, Map.of()));
 
         NoticeVersion original = noticeVersionRepository.findBySourceNoticeId("20965").orElseThrow();
         NoticeVersion correction = noticeVersionRepository.findBySourceNoticeId("20989").orElseThrow();
@@ -208,7 +209,7 @@ class MyHomeNoticeIngestServiceTest {
 
         IngestReport second = service.apply(MyHomeFixtures.noticeItems());
 
-        assertThat(second).isEqualTo(new IngestReport(0, 0, 2, 0));
+        assertThat(second).isEqualTo(new IngestReport(0, 0, 2, 0, Map.of()));
         assertThat(noticeVersionRepository.count()).isEqualTo(2);
         assertThat(supplyLineRepository.count()).isEqualTo(3);
     }

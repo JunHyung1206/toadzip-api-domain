@@ -45,23 +45,6 @@ public enum SupplyType {
         };
     }
 
-    /**
-     * 매입임대·전세임대인가. 이 둘만 <b>지어진 단지가 아니다.</b>
-     *
-     * <ul>
-     *   <li><b>매입임대</b> — 이미 지어진 민간주택을 사들인 것. 단지 개념이 약하고 건물 제원이 원천에 없다.
-     *       주택형 자리에 호실 번호(201, 302)가 오기도 한다.</li>
-     *   <li><b>전세임대</b> — 세입자가 직접 집을 구해오므로 대상 주택 자체가 없다.</li>
-     * </ul>
-     *
-     * <p>화이트리스트가 아니라 <b>이 둘만 제외</b>하는 이유는, 모르는 값이나 공급유형이 없는 분양공고를
-     * 실수로 버리지 않기 위해서다. 원천에 새 건설임대 제도가 생겨도 그대로 들어온다.
-     */
-    public static boolean isPurchasedOrJeonse(String label) {
-        SupplyType type = from(label);
-        return type == PURCHASED_RENTAL || type == JEONSE_RENTAL;
-    }
-
     /** 모르는 값은 억지로 넣지 않고 null 로 둔다. 원문은 별도 칸에 그대로 남는다. */
     public static SupplyType from(String label) {
         if (label == null) {

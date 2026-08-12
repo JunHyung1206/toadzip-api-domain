@@ -36,14 +36,6 @@ public record IngestReport(int created,
         rejectedByReason = Collections.unmodifiableMap(copy);
     }
 
-    /** 기존 호출부를 단계적으로 옮기는 동안 네 번째 값을 무효 원천 행 제외로 해석한다. */
-    public IngestReport(int created, int versioned, int unchanged, int skipped) {
-        this(created, versioned, unchanged, 0,
-                skipped == 0
-                        ? Map.of()
-                        : Map.of(IngestRejectionReason.INVALID_SOURCE_ROW, skipped));
-    }
-
     public static IngestReport empty() {
         return new IngestReport(0, 0, 0, 0, Map.of());
     }
@@ -70,11 +62,6 @@ public record IngestReport(int created,
 
     public int rejected() {
         return rejectedByReason.values().stream().mapToInt(Integer::intValue).sum();
-    }
-
-    /** 이전 API 이름. 모든 호출부가 사유 기반 결과로 이동하면 제거한다. */
-    public int skipped() {
-        return rejected();
     }
 
     public IngestReport plus(IngestReport other) {

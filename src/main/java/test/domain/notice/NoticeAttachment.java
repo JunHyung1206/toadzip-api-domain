@@ -23,7 +23,7 @@ import lombok.NoArgsConstructor;
  *
  * <p><b>공고 보충 스냅샷 소유다.</b> 조감도는 단지의 성질에 가깝지만 LH 가 그걸 공고 단위로 주고,
  * 우리 단지에 붙이려면 이름으로 매칭해야 한다 — PNU 가 없어서 안전하지 않다.
- * 그래서 원천이 준 그대로 공고버전에 달고, 단지명은 {@link #complexLabel} 에 문자열로만 남긴다.
+ * 그래서 원천이 준 그대로 공고의 보충 스냅샷에 달고, 단지명은 {@link #complexLabel} 에 문자열로만 남긴다.
  */
 @Entity
 @Table(

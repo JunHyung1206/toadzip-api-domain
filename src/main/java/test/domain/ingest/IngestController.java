@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import test.domain.ingest.lh.LhNoticeDetailIngestService;
 import test.domain.ingest.myhome.MyHomeComplexIngestService;
 import test.domain.ingest.myhome.MyHomeNoticeIngestService;
 import tools.jackson.databind.JsonNode;
@@ -21,17 +22,20 @@ public class IngestController {
 
     private final MyHomeComplexIngestService complexIngestService;
     private final MyHomeNoticeIngestService noticeIngestService;
+    private final LhNoticeDetailIngestService lhNoticeDetailIngestService;
     private final OpenApiClient lhApiClient;
     private final OpenApiClient myhomeNoticeApiClient;
     private final OpenApiClient myhomeComplexApiClient;
 
     public IngestController(MyHomeComplexIngestService complexIngestService,
                             MyHomeNoticeIngestService noticeIngestService,
+                            LhNoticeDetailIngestService lhNoticeDetailIngestService,
                             @Qualifier("lhApiClient") OpenApiClient lhApiClient,
                             @Qualifier("myhomeNoticeApiClient") OpenApiClient myhomeNoticeApiClient,
                             @Qualifier("myhomeComplexApiClient") OpenApiClient myhomeComplexApiClient) {
         this.complexIngestService = complexIngestService;
         this.noticeIngestService = noticeIngestService;
+        this.lhNoticeDetailIngestService = lhNoticeDetailIngestService;
         this.lhApiClient = lhApiClient;
         this.myhomeNoticeApiClient = myhomeNoticeApiClient;
         this.myhomeComplexApiClient = myhomeComplexApiClient;
@@ -68,6 +72,15 @@ public class IngestController {
     public IngestReport ingestNotices(@RequestParam(defaultValue = "100") int pageSize,
                                       @RequestParam(defaultValue = "50") int maxPages) {
         return noticeIngestService.ingest(MyHomeNoticeIngestService.RENTAL_PATH, pageSize, maxPages);
+    }
+
+    /**
+     * 이미 적재된 LH 공고에 일정·접수처·공고 시점 단지정보·첨부·정정사유를 덧입힌다.
+     * 공고를 먼저 적재해야 한다.
+     */
+    @PostMapping("/notice-details")
+    public IngestReport ingestNoticeDetails() {
+        return lhNoticeDetailIngestService.ingest();
     }
 
     /**
