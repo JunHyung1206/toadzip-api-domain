@@ -5,6 +5,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import jakarta.persistence.EntityManager;
+import test.domain.ingest.IngestReport;
 import test.domain.ingest.OpenApiClient;
 import test.domain.notice.NoticeAttachment;
 import test.domain.notice.NoticeAttachmentRepository;
@@ -21,6 +23,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -37,8 +40,11 @@ class LhNoticeDetailIngestServiceTest {
     private NoticeAttachmentRepository attachmentRepository;
     @Autowired
     private NoticeSupplementRepository supplementRepository;
+    @Autowired
+    private EntityManager entityManager;
 
     private NoticeVersion lhNotice;
+    private LhNoticeDetailIngestService service;
 
     @BeforeEach
     void setUp() {
@@ -46,6 +52,8 @@ class LhNoticeDetailIngestServiceTest {
                 "20942", SourceSystem.MYHOME_PORTAL, snapshot(
                         "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do"
                                 + "?panId=2015122300020501&ccrCnntSysDsCd=03&uppAisTpCd=06&aisTpCd=10&mi=1026")));
+        service = new LhNoticeDetailIngestService(
+                null, MAPPER, noticeVersionRepository, supplementRepository);
     }
 
     @Test
@@ -59,44 +67,70 @@ class LhNoticeDetailIngestServiceTest {
     }
 
     @Test
-    @DisplayName("마이홈이 안 주는 정정사유가 LH 상세에서 채워진다")
-    void fillsCorrectionReasonFromLh() {
+    @DisplayName("실제 LH 상세 응답을 공고 보충 aggregate 하나로 저장한다")
+    void storesCompleteSupplementAggregate() {
         JsonNode root = MAPPER.readTree(LH_DETAIL_RESPONSE);
+        IngestReport report = service.apply(lhNotice, root);
+        entityManager.flush();
+        entityManager.clear();
 
-        String reason = OpenApiClient.findRows(root, "dsEtcInfo").stream()
-                .map(row -> MAPPER.convertValue(row, LhNoticeDetail.EtcInfo.class).correctionReason())
-                .findFirst()
-                .orElse(null);
-        NoticeSupplement supplement = supplementRepository.save(
-                new NoticeSupplement(lhNotice, SourceSystem.LH_CHEONGYAK_PLUS, reason));
+        NoticeSupplement supplement = supplementRepository
+                .findByNoticeVersionId(lhNotice.getId()).orElseThrow();
 
+        assertThat(report.created()).isOne();
         assertThat(supplement.getCorrectionReason()).contains("접수기간 요일 오기재");
+        assertThat(supplement.getSchedules()).singleElement().satisfies(schedule -> {
+            assertThat(schedule.getComplexLabel()).isEqualTo("부산정관 A4블록 행복주택");
+            assertThat(schedule.getDocumentTargetAnnouncedOn()).isEqualTo(LocalDate.of(2026, 9, 7));
+            assertThat(schedule.getContractEndOn()).isEqualTo(LocalDate.of(2027, 1, 21));
+        });
+        assertThat(supplement.getReceptionPlaces()).singleElement().satisfies(place -> {
+            assertThat(place.getPhone()).isEqualTo("1600-1004");
+            assertThat(place.getDetailAddress()).isEqualTo("1층 105호");
+        });
+        assertThat(supplement.getComplexSnapshots()).singleElement().satisfies(complex -> {
+            assertThat(complex.getTotalUnitCount()).isEqualTo(384);
+            assertThat(complex.getExpectedMoveInYearMonth()).isEqualTo(YearMonth.of(2027, 11));
+        });
+        assertThat(supplement.getAttachments()).extracting(NoticeAttachment::getKind)
+                .containsExactly("공고문(hwp)", "공고문(PDF)", "단지조감도");
+        assertThat(supplement.getAttachments()).extracting(NoticeAttachment::getComplexLabel)
+                .containsExactly(null, null, "부산정관 A4블록 행복주택");
+
+        NoticeVersion unchangedNotice = noticeVersionRepository.findById(lhNotice.getId()).orElseThrow();
+        assertThat(unchangedNotice.getApplicationBeginOn()).isEqualTo(LocalDate.of(2026, 8, 18));
+        assertThat(unchangedNotice.getApplicationEndOn()).isEqualTo(LocalDate.of(2026, 8, 20));
+        assertThat(unchangedNotice.getWinnerAnnouncedOn()).isEqualTo(LocalDate.of(2026, 11, 20));
+        assertThat(attachmentRepository.count()).isEqualTo(3);
     }
 
     @Test
-    @DisplayName("공고문 파일과 단지 이미지가 한 테이블에 순서대로 담긴다")
-    void storesNoticeFilesAndComplexImagesTogether() {
+    @DisplayName("같은 LH 응답을 다시 적용하면 보충 aggregate를 중복 저장하지 않는다")
+    void appliesIdempotently() {
         JsonNode root = MAPPER.readTree(LH_DETAIL_RESPONSE);
-        NoticeSupplement supplement = new NoticeSupplement(lhNotice, SourceSystem.LH_CHEONGYAK_PLUS, null);
 
-        int order = 0;
-        for (JsonNode row : OpenApiClient.findRows(root, "dsAhflInfo")) {
-            LhNoticeDetail.NoticeFile file = MAPPER.convertValue(row, LhNoticeDetail.NoticeFile.class);
-            supplement.addAttachment(order++, file.kind(), file.name(), file.url(), null);
-        }
-        for (JsonNode row : OpenApiClient.findRows(root, "dsSbdAhfl")) {
-            LhNoticeDetail.ComplexImage image = MAPPER.convertValue(row, LhNoticeDetail.ComplexImage.class);
-            supplement.addAttachment(
-                    order++, image.kind(), image.name(), image.url(), image.complexName());
-        }
-        supplementRepository.saveAndFlush(supplement);
+        IngestReport first = service.apply(lhNotice, root);
+        IngestReport second = service.apply(lhNotice, root);
 
-        assertThat(attachmentRepository.findAll()).extracting(NoticeAttachment::getKind)
-                .containsExactly("공고문(hwp)", "공고문(PDF)", "단지조감도");
-        // 이미지에만 단지명이 붙는다. 우리 단지에 붙인 게 아니라 원천이 말한 이름이다.
-        assertThat(attachmentRepository.findAll()).extracting(NoticeAttachment::getComplexLabel)
-                .containsExactly(null, null, "부산정관 A4블록 행복주택");
-        assertThat(supplementRepository.existsByNoticeVersionId(lhNotice.getId())).isTrue();
+        assertThat(first.created()).isOne();
+        assertThat(second.unchanged()).isOne();
+        assertThat(supplementRepository.count()).isOne();
+    }
+
+    @Test
+    @DisplayName("추가 데이터가 없는 정상 응답도 조회 완료 표시를 남긴다")
+    void storesEmptySupplement() {
+        IngestReport report = service.apply(lhNotice, MAPPER.readTree("""
+                [{"resHeader":[{"RS_DTTM":"20260812123144","SS_CODE":"Y"}]}]
+                """));
+
+        NoticeSupplement supplement = supplementRepository
+                .findByNoticeVersionId(lhNotice.getId()).orElseThrow();
+        assertThat(report.created()).isOne();
+        assertThat(supplement.getSchedules()).isEmpty();
+        assertThat(supplement.getReceptionPlaces()).isEmpty();
+        assertThat(supplement.getComplexSnapshots()).isEmpty();
+        assertThat(supplement.getAttachments()).isEmpty();
     }
 
     @Test
@@ -127,6 +161,20 @@ class LhNoticeDetailIngestServiceTest {
              {"dsEtcInfo":[{"ETC_CTS":"○ 청약신청은 인터넷 PC 또는 모바일로 가능합니다.",
                             "CRC_RSN":"4. 공급일정 및 신청방법 등\\n■ 공급일정 표 - 접수기간 요일 오기재 일부수정"}]},
              {"dsEtcInfoNm":[{"ETC_CTS":"기타사항","CRC_RSN":"정정/취소사유"}]},
+             {"dsSplScdl":[{
+               "SBD_LGO_NM":"부산정관 A4블록 행복주택",
+               "ACP_DTTM":"2026.08.18 10:00 ~ 2026.08.20 16:00",
+               "PPR_SBM_OPE_ANC_DT":"2026.09.07","PPR_ACP_ST_DT":"2026.09.08",
+               "PPR_ACP_CLSG_DT":"2026.09.14","CTRT_ST_DT":"2027.01.19","CTRT_ED_DT":"2027.01.21"}]},
+             {"dsCtrtPlc":[{
+               "CTRT_PLC_ADR":"부산광역시 기장군 정관읍 정관중앙로 100",
+               "CTRT_PLC_DTL_ADR":"1층 105호","TSK_ST_DTTM":"2026.08.19 10:00",
+               "TSK_ED_DTTM":"2026.08.19 16:00","SIL_OFC_TLNO":"1600-1004",
+               "SIL_OFC_GUD_FCTS":"고령자 및 장애인 현장접수"}]},
+             {"dsSbd":[{
+               "LCC_NT_NM":"부산정관 A4블록 행복주택","LGDN_ADR":"부산광역시 기장군 정관읍 용수리",
+               "LGDN_DTL_ADR":"123","HSH_CNT":"384","HTN_FMLA_DESC":"지역난방",
+               "DDO_AR":"26.78~44.84","MVIN_XPC_YM":"2027.11"}]},
              {"dsAhflInfo":[
                {"AHFL_URL":"https://apply.lh.or.kr/lhapply/lhFile.do?fileid=68041511",
                 "SL_PAN_AHFL_DS_CD_NM":"공고문(hwp)","CMN_AHFL_NM":"부산정관A4 행복주택 모집공고문.hwp"},

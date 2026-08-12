@@ -7,6 +7,7 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.util.UriComponentsBuilder;
 import test.domain.ingest.IngestReport;
+import test.domain.ingest.IngestRejectionReason;
 import test.domain.ingest.OpenApiClient;
 import test.domain.ingest.SourceValues;
 import test.domain.notice.NoticeSupplement;
@@ -74,7 +75,7 @@ public class LhNoticeDetailIngestService {
     }
 
     private IngestReport applyOne(NoticeVersion version) {
-        // 공고버전이 불변이라 첨부도 불변이다. 이미 받았으면 다시 부르지 않는다.
+        // 공고버전이 불변이라 보충 스냅샷도 불변이다. 이미 받았으면 다시 부르지 않는다.
         if (supplementRepository.existsByNoticeVersionId(version.getId())) {
             return IngestReport.oneUnchanged();
         }
@@ -82,12 +83,28 @@ public class LhNoticeDetailIngestService {
         MultiValueMap<String, String> params = paramsFrom(version);
         if (params == null) {
             log.warn("LH 링크에서 호출 파라미터를 못 뽑아 건너뜁니다: {}", version.getDetailUrl());
-            return IngestReport.oneFailed();
+            return IngestReport.oneRejected(IngestRejectionReason.INVALID_SOURCE_ROW);
         }
 
-        JsonNode root = lhApiClient.getRaw(PATH, params);
+        try {
+            return apply(version, lhApiClient.getRaw(PATH, params));
+        } catch (RuntimeException e) {
+            log.warn("LH 공고 상세 적재에 실패했습니다: sourceNoticeId={}", version.getSourceNoticeId(), e);
+            return IngestReport.oneFailed();
+        }
+    }
+
+    /** HTTP 호출과 분리된 aggregate 저장 경계. 모든 자식을 구성한 뒤 한 번만 저장한다. */
+    IngestReport apply(NoticeVersion version, JsonNode root) {
+        if (supplementRepository.existsByNoticeVersionId(version.getId())) {
+            return IngestReport.oneUnchanged();
+        }
+
         NoticeSupplement supplement = new NoticeSupplement(
                 version, SourceSystem.LH_CHEONGYAK_PLUS, correctionReason(root));
+        addSchedules(supplement, root);
+        addReceptionPlaces(supplement, root);
+        addComplexSnapshots(supplement, root);
         addAttachments(supplement, root);
         supplementRepository.save(supplement);
         return IngestReport.oneCreated();
@@ -135,6 +152,76 @@ public class LhNoticeDetailIngestService {
             }
         }
         return null;
+    }
+
+    private void addSchedules(NoticeSupplement supplement, JsonNode root) {
+        for (JsonNode row : OpenApiClient.findRows(root, "dsSplScdl")) {
+            LhNoticeDetail.Schedule schedule = objectMapper.convertValue(row, LhNoticeDetail.Schedule.class);
+            String complexName = SourceValues.trimToNull(schedule.complexName());
+            String applicationPeriod = SourceValues.trimToNull(schedule.applicationPeriod());
+            if (complexName == null && applicationPeriod == null
+                    && SourceValues.toDate(schedule.documentTargetAnnouncementDate()) == null
+                    && SourceValues.toDate(schedule.documentSubmissionBeginDate()) == null
+                    && SourceValues.toDate(schedule.documentSubmissionEndDate()) == null
+                    && SourceValues.toDate(schedule.contractBeginDate()) == null
+                    && SourceValues.toDate(schedule.contractEndDate()) == null) {
+                continue;
+            }
+            supplement.addSchedule(
+                    supplement.getSchedules().size(),
+                    complexName,
+                    applicationPeriod,
+                    SourceValues.toDate(schedule.documentTargetAnnouncementDate()),
+                    SourceValues.toDate(schedule.documentSubmissionBeginDate()),
+                    SourceValues.toDate(schedule.documentSubmissionEndDate()),
+                    SourceValues.toDate(schedule.contractBeginDate()),
+                    SourceValues.toDate(schedule.contractEndDate()));
+        }
+    }
+
+    private void addReceptionPlaces(NoticeSupplement supplement, JsonNode root) {
+        for (JsonNode row : OpenApiClient.findRows(root, "dsCtrtPlc")) {
+            LhNoticeDetail.Reception reception = objectMapper.convertValue(row, LhNoticeDetail.Reception.class);
+            String address = SourceValues.trimToNull(reception.address());
+            String detailAddress = SourceValues.trimToNull(reception.detailAddress());
+            String operationBegin = SourceValues.trimToNull(reception.operationBegin());
+            String operationEnd = SourceValues.trimToNull(reception.operationEnd());
+            String phone = SourceValues.trimToNull(reception.phone());
+            String guidance = SourceValues.trimToNull(reception.guidance());
+            if (address == null && detailAddress == null && operationBegin == null
+                    && operationEnd == null && phone == null && guidance == null) {
+                continue;
+            }
+            supplement.addReceptionPlace(supplement.getReceptionPlaces().size(), address, detailAddress,
+                    operationBegin, operationEnd, phone, guidance);
+        }
+    }
+
+    private void addComplexSnapshots(NoticeSupplement supplement, JsonNode root) {
+        for (JsonNode row : OpenApiClient.findRows(root, "dsSbd")) {
+            LhNoticeDetail.ComplexSnapshot complex =
+                    objectMapper.convertValue(row, LhNoticeDetail.ComplexSnapshot.class);
+            String complexName = SourceValues.trimToNull(complex.complexName());
+            String lotAddress = SourceValues.trimToNull(complex.lotAddress());
+            String lotDetailAddress = SourceValues.trimToNull(complex.lotDetailAddress());
+            Integer totalUnitCount = SourceValues.toInt(complex.totalUnitCount());
+            String heatingDescription = SourceValues.trimToNull(complex.heatingDescription());
+            String exclusiveAreaRange = SourceValues.trimToNull(complex.exclusiveAreaRange());
+            if (complexName == null && lotAddress == null && lotDetailAddress == null
+                    && totalUnitCount == null && heatingDescription == null && exclusiveAreaRange == null
+                    && SourceValues.toYearMonth(complex.expectedMoveInYearMonth()) == null) {
+                continue;
+            }
+            supplement.addComplexSnapshot(
+                    supplement.getComplexSnapshots().size(),
+                    complexName,
+                    lotAddress,
+                    lotDetailAddress,
+                    totalUnitCount,
+                    heatingDescription,
+                    exclusiveAreaRange,
+                    SourceValues.toYearMonth(complex.expectedMoveInYearMonth()));
+        }
     }
 
     /** 공고문 파일과 단지 이미지를 응답 순서대로 한 줄로 잇는다. 둘 다 "공고에 딸린 파일"이라 같은 테이블이다. */
