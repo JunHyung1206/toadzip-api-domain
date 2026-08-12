@@ -7,6 +7,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.util.MultiValueMap;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import test.domain.housing.HouseType;
 import test.domain.housing.SupplyType;
 import test.domain.ingest.IngestReport;
@@ -25,9 +27,12 @@ import test.domain.source.SourceSystem;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import tools.jackson.databind.json.JsonMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -45,13 +50,122 @@ class MyHomeNoticeIngestServiceTest {
     @Autowired
     private PlatformTransactionManager transactionManager;
 
+    private FakeMyHomeClient fakeClient;
+    private List<String> capturedSupplyTypeCodes;
     private MyHomeNoticeIngestService service;
 
     @BeforeEach
     void setUp() {
+        // 공고 저장이 REQUIRES_NEW 로 커밋되어 @DataJpaTest 기본 롤백을 우회하므로,
+        // 테스트 사이에 남는 데이터를 매번 별도 트랜잭션으로 직접 비운다.
+        TransactionTemplate cleanup = new TransactionTemplate(transactionManager);
+        cleanup.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        cleanup.executeWithoutResult(status -> {
+            noticeHousingRepository.deleteAll();
+            noticeVersionRepository.deleteAll();
+            recruitmentNoticeRepository.deleteAll();
+        });
+
+        fakeClient = new FakeMyHomeClient();
+        capturedSupplyTypeCodes = fakeClient.capturedSupplyTypeCodes;
         service = new MyHomeNoticeIngestService(
-                null, recruitmentNoticeRepository, noticeVersionRepository, noticeHousingRepository,
+                fakeClient, recruitmentNoticeRepository, noticeVersionRepository, noticeHousingRepository,
                 new ConstructionRentalPolicy(), transactionManager);
+    }
+
+    /** 원천은 suplyTy(공급유형)별로만 필터를 열어 둬서, ingest 가 어떤 코드를 요청하는지 여기서 기록한다. */
+    private static final class FakeMyHomeClient extends OpenApiClient {
+        private final List<String> capturedSupplyTypeCodes = new ArrayList<>();
+        private final Set<String> typesThatNeverEnd = new HashSet<>();
+
+        FakeMyHomeClient() {
+            super(JsonMapper.builder().build(), "unused", "unused", "fake-myhome-notice");
+        }
+
+        /** 이 공급유형은 매 페이지 pageSize 만큼 꽉 찬 행을 계속 돌려줘서 maxPages 안에 끝나지 않게 한다. */
+        void returnFullPagesUntilLimit(String supplyTypeCode) {
+            typesThatNeverEnd.add(supplyTypeCode);
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> List<T> getList(String path, MultiValueMap<String, String> params,
+                                   String listKey, Class<T> type) {
+            String supplyTypeCode = params.getFirst("suplyTy");
+            capturedSupplyTypeCodes.add(supplyTypeCode);
+            if (!typesThatNeverEnd.contains(supplyTypeCode)) {
+                return List.of();
+            }
+            int pageSize = Integer.parseInt(params.getFirst("numOfRows"));
+            List<MyHomeNoticeItem> page = new ArrayList<>();
+            for (int i = 0; i < pageSize; i++) {
+                page.add(MyHomeFixtures.partialTypeFullPageItem());
+            }
+            return (List<T>) page;
+        }
+    }
+
+    private NoticeVersion version(String sourceNoticeId) {
+        return noticeVersionRepository
+                .findBySourceSystemAndSourceNoticeId(SourceSystem.MYHOME_PORTAL, sourceNoticeId)
+                .orElseThrow();
+    }
+
+    @Test
+    @DisplayName("허용된 8개 공급유형 코드만 요청한다")
+    void requestsOnlyEightApprovedSupplyTypeCodes() {
+        service.ingest(100, 50);
+
+        assertThat(capturedSupplyTypeCodes)
+                .containsExactly("01", "02", "03", "05", "06", "07", "10", "12")
+                .doesNotContain("13");
+    }
+
+    @Test
+    @DisplayName("한 공급유형이 마지막 페이지에 닿지 못하면 그 유형의 행은 하나도 반영하지 않는다")
+    void doesNotApplyRowsFromATypeThatDoesNotReachItsLastPage() {
+        fakeClient.returnFullPagesUntilLimit("10");
+
+        IngestReport report = service.ingest(1, 2);
+
+        assertThat(report.failed()).isOne();
+        assertThat(noticeVersionRepository.findBySourceSystemAndSourceNoticeId(
+                SourceSystem.MYHOME_PORTAL, "happy-partial")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("(pblancId, houseSn) 이 같은 행은 하나로 합치되, 내용이 갈리면 공고 전체를 제외한다")
+    void collapsesIdenticalSourceKeysButRejectsConflictingNoticeRows() {
+        IngestReport report = service.apply(MyHomeFixtures.rowsWithExactDuplicateAndConflictingDuplicate());
+
+        assertThat(noticeHousingRepository.count()).isOne();
+        assertThat(report.rejectedByReason())
+                .containsEntry(IngestRejectionReason.INVALID_SOURCE_ROW, 1);
+    }
+
+    @Test
+    @DisplayName("PNU·주소가 없어도 houseSn 이 있으면 공급행을 저장한다")
+    void keepsIdentifiedHousingEvenWhenPnuAndAddressAreMissing() {
+        IngestReport report = service.apply(List.of(MyHomeFixtures.rowWithHouseSnButNoPnuOrAddress()));
+
+        assertThat(report.created()).isOne();
+        assertThat(noticeHousingRepository.findAll()).singleElement().satisfies(housing -> {
+            assertThat(housing.getHouseSn()).isEqualTo(1);
+            assertThat(housing.getSuppliedHousing().getPnu()).isNull();
+            assertThat(housing.getSuppliedHousing().getFullAddress()).isNull();
+        });
+    }
+
+    @Test
+    @DisplayName("정정 체인은 입력 순서나 숫자 정렬과 무관하게 해소된다")
+    void resolvesCorrectionChainRegardlessOfInputOrder() {
+        service.apply(MyHomeFixtures.correctionRowsBeforeOriginalRows());
+
+        NoticeVersion original = version("20965");
+        NoticeVersion correction = version("20989");
+        assertThat(correction.getRecruitmentNotice().getId())
+                .isEqualTo(original.getRecruitmentNotice().getId());
+        assertThat(correction.getSupersedesVersion().getId()).isEqualTo(original.getId());
     }
 
     @Test
@@ -221,7 +335,8 @@ class MyHomeNoticeIngestServiceTest {
                 pagedClient, recruitmentNoticeRepository, noticeVersionRepository, noticeHousingRepository,
                 new ConstructionRentalPolicy(), transactionManager);
 
-        IngestReport report = service.ingest(MyHomeNoticeIngestService.RENTAL_PATH, 1, 10);
+        List<MyHomeNoticeItem> fetched = service.fetchComplete(MyHomeRentalType.HAPPY_HOUSE, 1, 10).orElseThrow();
+        IngestReport report = service.apply(fetched);
 
         NoticeVersion saved = noticeVersionRepository
                 .findBySourceSystemAndSourceNoticeId(SourceSystem.MYHOME_PORTAL, "20989").orElseThrow();

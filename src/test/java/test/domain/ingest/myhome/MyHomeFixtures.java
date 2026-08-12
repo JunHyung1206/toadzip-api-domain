@@ -281,6 +281,91 @@ final class MyHomeFixtures {
                 """, MyHomeNoticeItem.class);
     }
 
+    /** {@link #noticeItems()} 의 20989/20965 체인을 그대로 쓴다. 응답에서 정정공고(20989)가 원공고(20965)보다
+     * 먼저 온다 — 체인 저장 순서가 입력 순서나 숫자 정렬에 기대지 않는지 보려는 것이다. */
+    static List<MyHomeNoticeItem> correctionRowsBeforeOriginalRows() {
+        return noticeItems();
+    }
+
+    /**
+     * 같은 (pblancId, houseSn) 키가 두 번 오는 두 경우를 한 응답에 담았다.
+     * 40001 은 완전히 같은 행이 두 번 와서 하나로 합쳐져야 하고, 40002 는 같은 키인데 내용이 달라서
+     * (hsmpNm·주소·pnu·공급 수) 공고 전체가 제외돼야 한다.
+     */
+    static List<MyHomeNoticeItem> rowsWithExactDuplicateAndConflictingDuplicate() {
+        return parse("""
+                {"response":{"body":{"item":[
+                  {"pblancId":"40001","houseSn":1,"sttusNm":"일반공고","pblancNm":"중복 없는 공고",
+                   "suplyInsttNm":"LH","houseTyNm":"아파트","suplyTyNm":"행복주택","beforePblancId":"",
+                   "rcritPblancDe":"20260801","url":"https://apply.lh.or.kr/?panId=dup1",
+                   "hsmpNm":"정상단지","fullAdres":"경기도 성남시 테스트로 1","pnu":"4113111600104160001",
+                   "sumSuplyCo":10,"beginDe":"20260810","endDe":"20260812"},
+                  {"pblancId":"40001","houseSn":1,"sttusNm":"일반공고","pblancNm":"중복 없는 공고",
+                   "suplyInsttNm":"LH","houseTyNm":"아파트","suplyTyNm":"행복주택","beforePblancId":"",
+                   "rcritPblancDe":"20260801","url":"https://apply.lh.or.kr/?panId=dup1",
+                   "hsmpNm":"정상단지","fullAdres":"경기도 성남시 테스트로 1","pnu":"4113111600104160001",
+                   "sumSuplyCo":10,"beginDe":"20260810","endDe":"20260812"},
+                  {"pblancId":"40002","houseSn":1,"sttusNm":"일반공고","pblancNm":"충돌 공고",
+                   "suplyInsttNm":"LH","houseTyNm":"아파트","suplyTyNm":"행복주택","beforePblancId":"",
+                   "rcritPblancDe":"20260801","url":"https://apply.lh.or.kr/?panId=conflict",
+                   "hsmpNm":"충돌단지A","fullAdres":"경기도 성남시 테스트로 2","pnu":"4113111600104160002",
+                   "sumSuplyCo":5,"beginDe":"20260810","endDe":"20260812"},
+                  {"pblancId":"40002","houseSn":1,"sttusNm":"일반공고","pblancNm":"충돌 공고",
+                   "suplyInsttNm":"LH","houseTyNm":"아파트","suplyTyNm":"행복주택","beforePblancId":"",
+                   "rcritPblancDe":"20260801","url":"https://apply.lh.or.kr/?panId=conflict",
+                   "hsmpNm":"충돌단지B","fullAdres":"경기도 성남시 테스트로 3","pnu":"4113111600104160003",
+                   "sumSuplyCo":7,"beginDe":"20260810","endDe":"20260812"}
+                ]}}}
+                """, MyHomeNoticeItem.class);
+    }
+
+    /** houseSn 만 있고 pnu·hsmpNm·fullAdres 는 통째로 비어 있는 공급행. 매칭 불가는 이후 matcher 의 몫이다. */
+    static MyHomeNoticeItem rowWithHouseSnButNoPnuOrAddress() {
+        return parse("""
+                {"response":{"body":{"item":[
+                  {"pblancId":"40003","houseSn":1,"sttusNm":"일반공고","pblancNm":"주소 없는 공고",
+                   "suplyInsttNm":"LH","houseTyNm":"아파트","suplyTyNm":"행복주택","beforePblancId":"",
+                   "rcritPblancDe":"20260801","url":"https://apply.lh.or.kr/?panId=nopnu",
+                   "hsmpNm":"","brtcNm":"경상남도","signguNm":"통영시","fullAdres":"","pnu":"",
+                   "sumSuplyCo":5,"beginDe":"20260810","endDe":"20260812"}
+                ]}}}
+                """, MyHomeNoticeItem.class).get(0);
+    }
+
+    /**
+     * 공고 단위 트랜잭션 경계를 검증하려고 만든, 서로 독립적인 공고 둘(50001, 50002).
+     * 다른 테스트가 쓰는 pblancId(20965 등)와 겹치지 않아 실행 순서·컨텍스트 캐시와 무관하게 항상 깨끗하다.
+     */
+    static List<MyHomeNoticeItem> itemsForTwoNoticesOneFailing() {
+        return parse("""
+                {"response":{"body":{"item":[
+                  {"pblancId":"50001","houseSn":1,"sttusNm":"일반공고","pblancNm":"저장되는 공고",
+                   "suplyInsttNm":"LH","houseTyNm":"아파트","suplyTyNm":"행복주택","beforePblancId":"",
+                   "rcritPblancDe":"20260801","url":"https://apply.lh.or.kr/?panId=saved",
+                   "hsmpNm":"저장단지","fullAdres":"경기도 성남시 테스트로 1","pnu":"4113111600104160001",
+                   "sumSuplyCo":10,"beginDe":"20260810","endDe":"20260812"},
+                  {"pblancId":"50002","houseSn":1,"sttusNm":"일반공고","pblancNm":"실패하는 공고",
+                   "suplyInsttNm":"LH","houseTyNm":"아파트","suplyTyNm":"행복주택","beforePblancId":"",
+                   "rcritPblancDe":"20260801","url":"https://apply.lh.or.kr/?panId=failing",
+                   "hsmpNm":"실패단지","fullAdres":"경기도 성남시 테스트로 2","pnu":"4113111600104160002",
+                   "sumSuplyCo":5,"beginDe":"20260810","endDe":"20260812"}
+                ]}}}
+                """, MyHomeNoticeItem.class);
+    }
+
+    /** maxPages 안에 끝나지 않는 공급유형 시나리오용. 언제나 pageSize 만큼 꽉 찬 페이지를 만드는 자리표시 행. */
+    static MyHomeNoticeItem partialTypeFullPageItem() {
+        return parse("""
+                {"response":{"body":{"item":[
+                  {"pblancId":"happy-partial","houseSn":1,"sttusNm":"일반공고","pblancNm":"부분 페이지 공고",
+                   "suplyInsttNm":"LH","houseTyNm":"아파트","suplyTyNm":"행복주택","beforePblancId":"",
+                   "rcritPblancDe":"20260801","url":"https://apply.lh.or.kr/?panId=partial",
+                   "hsmpNm":"부분단지","fullAdres":"경기도 성남시 테스트로 1","pnu":"4113111600104160001",
+                   "sumSuplyCo":5,"beginDe":"20260810","endDe":"20260812"}
+                ]}}}
+                """, MyHomeNoticeItem.class).get(0);
+    }
+
     /** 전세임대처럼 대상 단지가 정해지지 않은 공고. pnu·hsmpNm·fullAdres 가 통째로 비어 있다. */
     static List<MyHomeNoticeItem> noticeItemsWithoutComplex() {
         return parse("""
@@ -297,7 +382,7 @@ final class MyHomeFixtures {
                    "refrnLegaldongNm":"","pnu":"","heatMthdNm":"","totHshldCo":"","sumSuplyCo":81,
                    "rentGtn":0,"enty":0,"prtpay":0,"surlus":0,"mtRntchrg":0,
                    "beginDe":"20260701","endDe":"20261231"},
-                  {"pblancId":"20976","houseSn":0,"sttusNm":"일반공고",
+                  {"pblancId":"20976","houseSn":1,"sttusNm":"일반공고",
                    "pblancNm":"2026 다자녀 전세임대 입주자 수시모집 공고","suplyInsttNm":"LH",
                    "houseTyNm":"다가구주택","suplyTyNm":"전세임대","beforePblancId":"",
                    "rcritPblancDe":"20260701","przwnerPresnatnDe":"20261231","suplyHoCo":"1170호",
@@ -312,7 +397,7 @@ final class MyHomeFixtures {
                 """, MyHomeNoticeItem.class);
     }
 
-    /** 행복주택 공고 안에 정상 공급행과 PNU가 깨진 공급행이 함께 온 경우. */
+    /** 행복주택 공고 안에 정상 공급행과 houseSn 이 없는(0) 깨진 공급행이 함께 온 경우. */
     static List<MyHomeNoticeItem> noticeItemsWithInvalidSupplyLine() {
         return parse("""
                 {"response":{"body":{"item":[
@@ -324,12 +409,12 @@ final class MyHomeFixtures {
                    "rnCodeNm":"테스트로","refrnLegaldongNm":"테스트동","pnu":"4113111600104160001",
                    "heatMthdNm":"지역난방","totHshldCo":"100","sumSuplyCo":10,"rentGtn":10000000,
                    "enty":1000000,"surlus":9000000,"mtRntchrg":100000,"beginDe":"20260810","endDe":"20260812"},
-                  {"pblancId":"30001","houseSn":2,"sttusNm":"일반공고","pblancNm":"행복주택 모집",
+                  {"pblancId":"30001","houseSn":0,"sttusNm":"일반공고","pblancNm":"행복주택 모집",
                    "suplyInsttNm":"LH","houseTyNm":"아파트","suplyTyNm":"행복주택","beforePblancId":"",
                    "rcritPblancDe":"20260801","przwnerPresnatnDe":"20261001","refrnc":"1600-1004",
                    "url":"https://apply.lh.or.kr/?panId=valid","pcUrl":"https://myhome/2","mobileUrl":"https://m.myhome/2",
                    "hsmpNm":"깨진단지","brtcNm":"경기도","signguNm":"성남시","fullAdres":"경기도 성남시 테스트로 2",
-                   "pnu":"INVALID","sumSuplyCo":5,"rentGtn":10000000,"enty":1000000,"surlus":9000000,
+                   "pnu":"4113111600104160009","sumSuplyCo":5,"rentGtn":10000000,"enty":1000000,"surlus":9000000,
                    "mtRntchrg":100000,"beginDe":"20260810","endDe":"20260812"}
                 ]}}}
                 """, MyHomeNoticeItem.class);

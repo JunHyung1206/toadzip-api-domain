@@ -6,6 +6,8 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.util.Objects;
+
 /**
  * 이번 공고에서 이 공급행에 걸린 실제 임대조건.
  * 카탈로그가 들고 있는 기준값({@link test.domain.housing.BaseRentTerms})과는 다른 값이다.
@@ -38,5 +40,16 @@ public class RentTerms {
         this.downPayment = downPayment;
         this.balance = balance;
         this.monthlyRent = monthlyRent;
+    }
+
+    /** 재수집 시 원천 내용이 그대로인지 비교하는 값 비교. JPA 식별자는 없으므로 비교 대상이 아니다. */
+    public static boolean sameValues(RentTerms left, RentTerms right) {
+        if (left == null || right == null) {
+            return left == right;
+        }
+        return Objects.equals(left.deposit, right.deposit)
+                && Objects.equals(left.downPayment, right.downPayment)
+                && Objects.equals(left.balance, right.balance)
+                && Objects.equals(left.monthlyRent, right.monthlyRent);
     }
 }

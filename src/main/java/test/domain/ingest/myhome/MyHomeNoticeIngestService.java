@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import test.domain.ingest.ConstructionRentalPolicy;
 import test.domain.ingest.IngestReport;
@@ -25,13 +26,20 @@ import test.domain.notice.SuppliedHousing;
 import test.domain.source.SourceSystem;
 
 import java.time.LocalDate;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * 15108420 → RecruitmentNotice + NoticeVersion + NoticeHousing 적재.
@@ -40,8 +48,8 @@ import java.util.Optional;
  * 행마다 sumSuplyCo(공급 수)가 다르다. 그래서 pblancId 로 묶어 공고버전 하나를 만들고 행들을 공급행으로 붙인다.
  *
  * <p>정정공고는 새 pblancId 로 발급되고 beforePblancId 가 이전 공고를 가리킨다. 실데이터에서
- * beforePblancId 는 항상 자기 pblancId 보다 작았고 19건 모두 같은 응답 안에 이전 공고가 들어 있었다.
- * 그래서 pblancId 숫자 오름차순으로 처리하면 이전 버전이 항상 먼저 저장된다.
+ * beforePblancId 가 자기 pblancId 보다 늘 작다는 보장은 없어서, 숫자 정렬이 아니라 batch 안의
+ * 의존관계(누가 누구를 이전 버전으로 가리키는가)를 그래프로 만들어 위상 정렬한다({@link #resolveChainOrder}).
  *
  * <p>단지 카탈로그({@code housing_complex})와의 연결은 이 서비스의 책임이 아니다. 그 매칭은 별도
  * 파생 matcher 가 한다.
@@ -81,34 +89,60 @@ public class MyHomeNoticeIngestService {
         this.noticeHousingRepository = noticeHousingRepository;
         this.rentalPolicy = rentalPolicy;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
-    public IngestReport ingest(String path, int pageSize, int maxPages) {
-        List<MyHomeNoticeItem> allItems = new ArrayList<>();
-        boolean reachedEnd = false;
+    /**
+     * 원천이 공급유형(suplyTy)별로만 필터를 열어 둬서, 허용된 8개 코드를 모두 돈다.
+     * 한 공급유형의 페이지를 전부 모은 뒤에만({@link #fetchComplete}) 그 결과를 신뢰한다. 그래서 한
+     * 공급유형이 maxPages 안에 끝나지 않아도 다른 공급유형은 그대로 진행되고, 그 유형만 실패 1건으로 남는다.
+     */
+    public IngestReport ingest(int pageSize, int maxPages) {
+        List<MyHomeNoticeItem> successfulRows = new ArrayList<>();
+        IngestReport report = IngestReport.empty();
+        for (MyHomeRentalType type : MyHomeRentalType.values()) {
+            try {
+                Optional<List<MyHomeNoticeItem>> rows = fetchComplete(type, pageSize, maxPages);
+                if (rows.isPresent()) {
+                    successfulRows.addAll(rows.orElseThrow());
+                } else {
+                    report = report.plus(IngestReport.oneFailed());
+                }
+            } catch (RuntimeException exception) {
+                log.warn("마이홈 공고 공급유형 조회 실패: suplyTy={}", type.requestCode(), exception);
+                report = report.plus(IngestReport.oneFailed());
+            }
+        }
+        return report.plus(apply(successfulRows));
+    }
+
+    /**
+     * 한 공급유형의 모든 페이지를 모은다. 빈 페이지 또는 pageSize 보다 짧은 페이지를 받으면 그 시점까지
+     * 모은 행을 반환한다. maxPages 까지 매번 꽉 찬 페이지만 왔다면 어디서 끝나는지 알 수 없으므로
+     * {@link Optional#empty()} 를 반환해 이 공급유형은 아무 것도 적용하지 않는다.
+     */
+    Optional<List<MyHomeNoticeItem>> fetchComplete(MyHomeRentalType type, int pageSize, int maxPages) {
+        List<MyHomeNoticeItem> rows = new ArrayList<>();
         for (int page = 1; page <= maxPages; page++) {
             MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
+            params.add("suplyTy", type.requestCode());
             params.add("numOfRows", String.valueOf(pageSize));
             params.add("pageNo", String.valueOf(page));
 
             List<MyHomeNoticeItem> items =
-                    myhomeApiClient.getList(path, params, LIST_POINTER, MyHomeNoticeItem.class);
-            log.info("마이홈 공고 {} {}페이지 {}행", path, page, items.size());
+                    myhomeApiClient.getList(RENTAL_PATH, params, LIST_POINTER, MyHomeNoticeItem.class);
+            log.info("마이홈 공고 suplyTy={} {}페이지 {}행", type.requestCode(), page, items.size());
             if (items.isEmpty()) {
-                reachedEnd = true;
-                break;
+                return Optional.of(rows);
             }
-            allItems.addAll(items);
+            rows.addAll(items);
             if (items.size() < pageSize) {
-                reachedEnd = true;
-                break;
+                return Optional.of(rows);
             }
         }
-        if (!reachedEnd) {
-            log.warn("마이홈 공고가 maxPages={} 안에 끝나지 않아 부분 적재하지 않습니다: {}행", maxPages, allItems.size());
-            return IngestReport.oneFailed();
-        }
-        return apply(allItems);
+        log.warn("마이홈 공고 suplyTy={} 가 maxPages={} 안에 끝나지 않아 부분 적재하지 않습니다: {}행",
+                type.requestCode(), maxPages, rows.size());
+        return Optional.empty();
     }
 
     /** 공고 단위로 커밋된다. 이미 저장된 pblancId 는 건드리지 않으므로 몇 번을 돌려도 결과가 같다. */
@@ -120,28 +154,145 @@ public class MyHomeNoticeIngestService {
                 report = report.plus(IngestReport.oneRejected(IngestRejectionReason.MISSING_IDENTITY));
             }
         }
-        for (Map.Entry<String, List<MyHomeNoticeItem>> notice : groupByNoticeInChainOrder(items).entrySet()) {
-            IngestReport noticeReport = transactionTemplate.execute(
-                    status -> applyNotice(notice.getKey(), notice.getValue()));
-            report = report.plus(Objects.requireNonNull(noticeReport));
+        List<MyHomeNoticeItem> withIdentity = items.stream()
+                .filter(item -> SourceValues.trimToNull(item.pblancId()) != null)
+                .toList();
+
+        DeduplicatedRows deduplicated = deduplicate(withIdentity);
+        for (String conflictedId : deduplicated.conflictedNoticeIds()) {
+            log.warn("공급행 키(pblancId, houseSn) 충돌로 공고 전체를 제외합니다: pblancId={}", conflictedId);
+            report = report.plus(IngestReport.oneRejected(IngestRejectionReason.INVALID_SOURCE_ROW));
+        }
+
+        Map<String, List<MyHomeNoticeItem>> groups = groupByNotice(deduplicated.accepted());
+        ChainResolution chain = resolveChainOrder(groups);
+        for (String excludedId : chain.excludedIds()) {
+            log.warn("정정 체인 분기 또는 순환으로 공고를 제외합니다: pblancId={}", excludedId);
+            report = report.plus(IngestReport.oneRejected(IngestRejectionReason.INVALID_SOURCE_ROW));
+        }
+
+        for (String pblancId : chain.order()) {
+            try {
+                IngestReport noticeReport = transactionTemplate.execute(
+                        status -> applyNotice(pblancId, groups.get(pblancId)));
+                report = report.plus(Objects.requireNonNull(noticeReport));
+            } catch (RuntimeException exception) {
+                log.warn("마이홈 공고 저장 실패: pblancId={}", pblancId, exception);
+                report = report.plus(IngestReport.oneFailed());
+            }
         }
         return report;
     }
 
-    /** pblancId 숫자 오름차순 = 원공고 → 정정공고 순. 이 순서라야 beforePblancId 를 이미 저장된 버전에서 찾을 수 있다. */
-    private Map<String, List<MyHomeNoticeItem>> groupByNoticeInChainOrder(List<MyHomeNoticeItem> items) {
+    private record NoticeHousingKey(String pblancId, Integer houseSn) {
+    }
+
+    private record DeduplicatedRows(
+            List<MyHomeNoticeItem> accepted,
+            Set<String> conflictedNoticeIds) {
+    }
+
+    /**
+     * (pblancId, houseSn) 이 같은 행이 둘 이상 오면 첫 행만 받는다. 그 둘의 내용이 다르면(원천이
+     * 모순된 응답을 준 것) 신뢰할 수 없으므로 그 공고 전체를 제외 대상으로 표시한다.
+     */
+    private DeduplicatedRows deduplicate(List<MyHomeNoticeItem> rows) {
+        Map<NoticeHousingKey, MyHomeNoticeItem> unique = new LinkedHashMap<>();
+        Set<String> conflictedNoticeIds = new HashSet<>();
+        for (MyHomeNoticeItem row : rows) {
+            NoticeHousingKey key = new NoticeHousingKey(
+                    SourceValues.trimToNull(row.pblancId()), row.houseSn());
+            MyHomeNoticeItem previous = unique.putIfAbsent(key, row);
+            if (previous != null && !previous.equals(row) && key.pblancId() != null) {
+                conflictedNoticeIds.add(key.pblancId());
+            }
+        }
+        List<MyHomeNoticeItem> accepted = unique.values().stream()
+                .filter(row -> !conflictedNoticeIds.contains(SourceValues.trimToNull(row.pblancId())))
+                .toList();
+        return new DeduplicatedRows(accepted, Set.copyOf(conflictedNoticeIds));
+    }
+
+    private Map<String, List<MyHomeNoticeItem>> groupByNotice(List<MyHomeNoticeItem> items) {
         Map<String, List<MyHomeNoticeItem>> grouped = new LinkedHashMap<>();
-        items.stream()
-                .filter(item -> SourceValues.trimToNull(item.pblancId()) != null)
-                .sorted(Comparator.comparingLong(MyHomeNoticeIngestService::sortableNoticeId))
-                .forEach(item -> grouped.computeIfAbsent(item.pblancId().strip(), key -> new ArrayList<>()).add(item));
+        for (MyHomeNoticeItem item : items) {
+            grouped.computeIfAbsent(item.pblancId().strip(), key -> new ArrayList<>()).add(item);
+        }
         return grouped;
     }
 
-    /** pblancId 는 숫자 문자열이지만, 숫자가 아닌 값이 오더라도 정렬이 터지지 않게 뒤로 보낸다. */
-    private static long sortableNoticeId(MyHomeNoticeItem item) {
-        Integer numeric = SourceValues.toInt(item.pblancId());
-        return numeric == null ? Long.MAX_VALUE : numeric;
+    private record ChainResolution(List<String> order, Set<String> excludedIds) {
+    }
+
+    /**
+     * 정정 체인 저장 순서를 숫자 정렬이나 입력 순서에 기대지 않고 정한다.
+     *
+     * <ol>
+     *   <li>beforePblancId 가 없거나 이번 batch 밖(=DB에 있거나, 어디에도 없어 새 체인이 되는 경우)이면
+     *       의존할 게 없으니 바로 저장 가능하다.</li>
+     *   <li>beforePblancId 가 이번 batch 안의 다른 그룹이면, 그 그룹을 먼저 저장해야 한다. 이 의존관계를
+     *       그래프로 만들어 위상 정렬한다.</li>
+     *   <li>같은 이전 버전(beforePblancId 값)을 둘 이상의 그룹이 가리키면(분기) 그 그룹들을 모두 제외한다.</li>
+     *   <li>batch 안에서만 닫히는 순환은 위상 정렬로 처리되지 않고 남으므로, 그 남은 그룹들도 제외한다.</li>
+     * </ol>
+     */
+    private ChainResolution resolveChainOrder(Map<String, List<MyHomeNoticeItem>> groups) {
+        Map<String, String> beforeIds = new LinkedHashMap<>();
+        for (Map.Entry<String, List<MyHomeNoticeItem>> entry : groups.entrySet()) {
+            beforeIds.put(entry.getKey(), SourceValues.trimToNull(entry.getValue().get(0).beforePblancId()));
+        }
+
+        Map<String, List<String>> claimants = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : beforeIds.entrySet()) {
+            if (entry.getValue() != null) {
+                claimants.computeIfAbsent(entry.getValue(), key -> new ArrayList<>()).add(entry.getKey());
+            }
+        }
+        Set<String> branchExcluded = new LinkedHashSet<>();
+        for (List<String> children : claimants.values()) {
+            if (children.size() > 1) {
+                branchExcluded.addAll(children);
+            }
+        }
+
+        Set<String> remaining = new LinkedHashSet<>(groups.keySet());
+        remaining.removeAll(branchExcluded);
+
+        Map<String, List<String>> childrenInBatch = new LinkedHashMap<>();
+        Map<String, Integer> dependencyCount = new HashMap<>();
+        for (String pblancId : remaining) {
+            String before = beforeIds.get(pblancId);
+            if (before != null && remaining.contains(before)) {
+                childrenInBatch.computeIfAbsent(before, key -> new ArrayList<>()).add(pblancId);
+                dependencyCount.put(pblancId, 1);
+            } else {
+                dependencyCount.put(pblancId, 0);
+            }
+        }
+
+        Deque<String> ready = new ArrayDeque<>();
+        for (String pblancId : remaining) {
+            if (dependencyCount.get(pblancId) == 0) {
+                ready.add(pblancId);
+            }
+        }
+        List<String> order = new ArrayList<>();
+        while (!ready.isEmpty()) {
+            String current = ready.poll();
+            order.add(current);
+            for (String child : childrenInBatch.getOrDefault(current, List.of())) {
+                if (dependencyCount.merge(child, -1, Integer::sum) == 0) {
+                    ready.add(child);
+                }
+            }
+        }
+
+        Set<String> cycleExcluded = new LinkedHashSet<>(remaining);
+        cycleExcluded.removeAll(order);
+
+        Set<String> excludedIds = new LinkedHashSet<>(branchExcluded);
+        excludedIds.addAll(cycleExcluded);
+        return new ChainResolution(order, excludedIds);
     }
 
     private IngestReport applyNotice(String pblancId, List<MyHomeNoticeItem> rows) {
@@ -171,8 +322,8 @@ public class MyHomeNoticeIngestService {
                 validRows.add(row);
                 continue;
             }
-            log.warn("공급행 제외: source=MYHOME_NOTICE, pblancId={}, houseSn={}, supplyType={}, reason={}",
-                    pblancId, row.houseSn(), row.suplyTyNm(), IngestRejectionReason.INVALID_SOURCE_ROW);
+            log.warn("공급행 제외: source=MYHOME_NOTICE, pblancId={}, houseSn={}, reason={}",
+                    pblancId, row.houseSn(), IngestRejectionReason.INVALID_SOURCE_ROW);
             rejectedRows = rejectedRows.plus(
                     IngestReport.oneRejected(IngestRejectionReason.INVALID_SOURCE_ROW));
         }
@@ -185,11 +336,15 @@ public class MyHomeNoticeIngestService {
         Optional<NoticeVersion> alreadyStored = noticeVersionRepository
                 .findBySourceSystemAndSourceNoticeId(SourceSystem.MYHOME_PORTAL, pblancId);
         if (alreadyStored.isPresent()) {
-            // 마이홈은 정정 때 새 pblancId 를 발급한다. 그런데도 내용이 달라졌다면 원천이 제자리에서 고친 것이라
-            // 우리 스냅샷이 조용히 낡는다. 버전을 함부로 만들지는 않되 눈에 보이게 남긴다.
-            if (!alreadyStored.get().hasSameContentAs(snapshotOf(validHead))) {
-                log.warn("공고 {}의 내용이 같은 pblancId 로 바뀌었습니다. 원천이 제자리에서 수정한 것으로 보입니다.",
+            NoticeVersion existing = alreadyStored.get();
+            boolean sameContent = existing.hasSameContentAs(snapshotOf(validHead))
+                    && hasSameHousingContent(existing, validRows);
+            if (!sameContent) {
+                // 마이홈은 정정 때 새 pblancId 를 발급한다. 그런데도 같은 pblancId 의 내용이 달라졌다면
+                // 원천이 제자리에서 고친 것이라 신뢰할 수 없다. 기존 aggregate 는 그대로 두고 이 요청만 제외한다.
+                log.warn("공고 {}의 내용이 같은 pblancId 로 바뀌었습니다. 기존 내용을 유지하고 이 요청은 제외합니다.",
                         pblancId);
+                return IngestReport.oneRejected(IngestRejectionReason.INVALID_SOURCE_ROW).plus(rejectedRows);
             }
             return IngestReport.oneUnchanged().plus(rejectedRows);
         }
@@ -210,12 +365,39 @@ public class MyHomeNoticeIngestService {
         return stored.plus(rejectedRows);
     }
 
+    /** NoticeHousing 의 필수 조건은 이 둘뿐이다. PNU·주소·단지명 누락은 행을 버릴 이유가 아니며,
+     * 붙을 단지를 못 찾았다는 사실은 이후 matcher 가 UNMATCHED 로 남긴다. */
     private boolean validSupplyLine(MyHomeNoticeItem row) {
-        return row.houseSn() != null
-                && row.houseSn() > 0
-                && SourceValues.trimToNull(row.hsmpNm()) != null
-                && SourceValues.trimToNull(row.fullAdres()) != null
-                && rentalPolicy.hasValidPnu(row.pnu());
+        return row.houseSn() != null && row.houseSn() > 0;
+    }
+
+    /**
+     * 같은 pblancId 를 다시 읽었을 때 저장된 공급행 집합·내용까지 완전히 같은지 본다.
+     * houseSn 집합이 다르거나 한 공급행이라도 내용이 다르면 재수집을 신뢰할 수 없다는 뜻이라 false 를 반환한다.
+     */
+    private boolean hasSameHousingContent(NoticeVersion existing, List<MyHomeNoticeItem> validRows) {
+        List<NoticeHousing> stored = noticeHousingRepository.findByNoticeVersionOrderByDisplayOrder(existing);
+        Set<Integer> storedHouseSns = stored.stream()
+                .map(NoticeHousing::getHouseSn)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<Integer> incomingHouseSns = validRows.stream()
+                .map(MyHomeNoticeItem::houseSn)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (!storedHouseSns.equals(incomingHouseSns)) {
+            return false;
+        }
+        Map<Integer, NoticeHousing> byHouseSn = stored.stream()
+                .collect(Collectors.toMap(NoticeHousing::getHouseSn, Function.identity()));
+        for (MyHomeNoticeItem row : validRows) {
+            NoticeHousing storedHousing = byHouseSn.get(row.houseSn());
+            boolean same = storedHousing != null && storedHousing.hasSameSourceContentAs(
+                    row.houseSn(), row.sumSuplyCo(), suppliedHousingOf(row), rentTermsOf(row),
+                    SourceValues.trimToNull(row.pcUrl()), SourceValues.trimToNull(row.mobileUrl()));
+            if (!same) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private Optional<NoticeVersion> findPrevious(MyHomeNoticeItem head, String beforeId) {

@@ -52,7 +52,7 @@ public class IngestController {
     @PostMapping("/notices")
     public IngestReport ingestNotices(@RequestParam(defaultValue = "100") int pageSize,
                                       @RequestParam(defaultValue = "50") int maxPages) {
-        return noticeIngestService.ingest(MyHomeNoticeIngestService.RENTAL_PATH, pageSize, maxPages);
+        return noticeIngestService.ingest(pageSize, maxPages);
     }
 
     /**

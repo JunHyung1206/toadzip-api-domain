@@ -15,6 +15,8 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.util.Objects;
+
 
 /**
  * 이번 공고버전에서 어느 주택에 수량이 독립적으로 배정됐는가. 원천 HWSPR02 응답의 한 행이 여기 한 줄이다.
@@ -98,5 +100,23 @@ public class NoticeHousing {
         this.rentTerms = rentTerms;
         this.detailUrl = detailUrl;
         this.mobileDetailUrl = mobileDetailUrl;
+    }
+
+    /**
+     * 같은 (pblancId, houseSn) 을 다시 읽었을 때 원천 내용이 그대로인지 본다. 재수집이 이 공급행을
+     * 고쳐 써도 되는지 판단하는 기준이라, JPA 식별자·연관 FK는 빼고 값 필드만 비교한다.
+     */
+    public boolean hasSameSourceContentAs(Integer houseSn,
+                                          Integer supplyCount,
+                                          SuppliedHousing suppliedHousing,
+                                          RentTerms rentTerms,
+                                          String detailUrl,
+                                          String mobileDetailUrl) {
+        return Objects.equals(this.houseSn, houseSn)
+                && Objects.equals(this.supplyCount, supplyCount)
+                && SuppliedHousing.sameValues(this.suppliedHousing, suppliedHousing)
+                && RentTerms.sameValues(this.rentTerms, rentTerms)
+                && Objects.equals(this.detailUrl, detailUrl)
+                && Objects.equals(this.mobileDetailUrl, mobileDetailUrl);
     }
 }

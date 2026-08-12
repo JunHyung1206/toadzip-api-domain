@@ -6,6 +6,8 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.util.Objects;
+
 /**
  * 공고가 말하는 대상 주택 정보를 공고 시점 그대로 보존한 것.
  *
@@ -72,6 +74,22 @@ public class SuppliedHousing {
         this.districtName = districtName;
         this.heatingTypeName = heatingTypeName;
         this.totalUnitCount = totalUnitCount;
+    }
+
+    /** 재수집 시 원천 내용이 그대로인지 비교하는 값 비교. JPA 식별자는 없으므로 비교 대상이 아니다. */
+    public static boolean sameValues(SuppliedHousing left, SuppliedHousing right) {
+        if (left == null || right == null) {
+            return left == right;
+        }
+        return Objects.equals(left.complexName, right.complexName)
+                && Objects.equals(left.fullAddress, right.fullAddress)
+                && Objects.equals(left.pnu, right.pnu)
+                && Objects.equals(left.roadName, right.roadName)
+                && Objects.equals(left.referenceLegalDongName, right.referenceLegalDongName)
+                && Objects.equals(left.provinceName, right.provinceName)
+                && Objects.equals(left.districtName, right.districtName)
+                && Objects.equals(left.heatingTypeName, right.heatingTypeName)
+                && Objects.equals(left.totalUnitCount, right.totalUnitCount);
     }
 
     /** 단지가 안 붙는 행에서 사용자에게 보여줄 유일한 위치. */
