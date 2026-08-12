@@ -7,21 +7,21 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import test.domain.housing.HousingComplex;
-import test.domain.housing.HousingComplexRepository;
 import test.domain.ingest.ConstructionRentalPolicy;
 import test.domain.ingest.IngestReport;
 import test.domain.ingest.IngestRejectionReason;
 import test.domain.ingest.OpenApiClient;
 import test.domain.ingest.SourceValues;
 import test.domain.notice.NoticeChangeStatus;
+import test.domain.notice.NoticeHousing;
+import test.domain.notice.NoticeHousingRepository;
 import test.domain.notice.NoticeSnapshot;
 import test.domain.notice.NoticeVersion;
 import test.domain.notice.NoticeVersionRepository;
+import test.domain.notice.RecruitmentNotice;
+import test.domain.notice.RecruitmentNoticeRepository;
 import test.domain.notice.RentTerms;
 import test.domain.notice.SuppliedHousing;
-import test.domain.notice.SupplyLine;
-import test.domain.notice.SupplyLineRepository;
 import test.domain.source.SourceSystem;
 
 import java.time.LocalDate;
@@ -34,7 +34,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * 15108420 → NoticeVersion + SupplyLine 적재.
+ * 15108420 → RecruitmentNotice + NoticeVersion + NoticeHousing 적재.
  *
  * <p>원천 한 행은 공고가 아니라 공급행이다. 같은 pblancId 가 지역별·단지별로 여러 행에 걸쳐 나오고
  * 행마다 sumSuplyCo(공급 수)가 다르다. 그래서 pblancId 로 묶어 공고버전 하나를 만들고 행들을 공급행으로 붙인다.
@@ -42,6 +42,9 @@ import java.util.Optional;
  * <p>정정공고는 새 pblancId 로 발급되고 beforePblancId 가 이전 공고를 가리킨다. 실데이터에서
  * beforePblancId 는 항상 자기 pblancId 보다 작았고 19건 모두 같은 응답 안에 이전 공고가 들어 있었다.
  * 그래서 pblancId 숫자 오름차순으로 처리하면 이전 버전이 항상 먼저 저장된다.
+ *
+ * <p>단지 카탈로그({@code housing_complex})와의 연결은 이 서비스의 책임이 아니다. 그 매칭은 별도
+ * 파생 matcher 가 한다.
  */
 @Slf4j
 @Service
@@ -60,22 +63,22 @@ public class MyHomeNoticeIngestService {
     private static final String LIST_POINTER = "/response/body/item";
 
     private final OpenApiClient myhomeApiClient;
+    private final RecruitmentNoticeRepository recruitmentNoticeRepository;
     private final NoticeVersionRepository noticeVersionRepository;
-    private final SupplyLineRepository supplyLineRepository;
-    private final HousingComplexRepository complexRepository;
+    private final NoticeHousingRepository noticeHousingRepository;
     private final ConstructionRentalPolicy rentalPolicy;
     private final TransactionTemplate transactionTemplate;
 
     public MyHomeNoticeIngestService(@Qualifier("myhomeNoticeApiClient") OpenApiClient myhomeApiClient,
+                                     RecruitmentNoticeRepository recruitmentNoticeRepository,
                                      NoticeVersionRepository noticeVersionRepository,
-                                     SupplyLineRepository supplyLineRepository,
-                                     HousingComplexRepository complexRepository,
+                                     NoticeHousingRepository noticeHousingRepository,
                                      ConstructionRentalPolicy rentalPolicy,
                                      PlatformTransactionManager transactionManager) {
         this.myhomeApiClient = myhomeApiClient;
+        this.recruitmentNoticeRepository = recruitmentNoticeRepository;
         this.noticeVersionRepository = noticeVersionRepository;
-        this.supplyLineRepository = supplyLineRepository;
-        this.complexRepository = complexRepository;
+        this.noticeHousingRepository = noticeHousingRepository;
         this.rentalPolicy = rentalPolicy;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
@@ -106,37 +109,6 @@ public class MyHomeNoticeIngestService {
             return IngestReport.oneFailed();
         }
         return apply(allItems);
-    }
-
-    /**
-     * 적재된 공고가 가리키는 지역코드 목록. 단지를 어느 시군구까지 받아야 공고가 다 붙는지 알려 준다.
-     * 단지 API 가 시군구 단위로만 열려 있어서 필요한 값이다.
-     */
-    public List<String> regionCodesFromNotices() {
-        return supplyLineRepository.findDistinctRegionCodes();
-    }
-
-    /**
-     * 단지를 나중에 적재한 뒤 못 붙였던 공급행을 다시 붙인다.
-     *
-     * <p>공고 적재 시점에는 그 단지가 아직 DB 에 없을 수 있다. 단지 API 가 시군구 단위로만 열려 있어
-     * 어느 지역을 받을지 공고에서 알아내야 하기 때문에, 순서가 공고 → 단지가 된다.
-     *
-     * @return 새로 붙인 공급행 수
-     */
-    public int rematchComplexes() {
-        List<SupplyLine> unmatched = supplyLineRepository.findByComplexIsNullAndSuppliedHousingPnuIsNotNull();
-        int matched = 0;
-        for (SupplyLine line : unmatched) {
-            HousingComplex complex = matchByPnu(line.getSuppliedHousing().getPnu());
-            if (complex != null) {
-                line.attachComplex(complex);
-                supplyLineRepository.save(line);
-                matched++;
-            }
-        }
-        log.info("재매칭 대상 {}건 중 {}건 연결", unmatched.size(), matched);
-        return matched;
     }
 
     /** 공고 단위로 커밋된다. 이미 저장된 pblancId 는 건드리지 않으므로 몇 번을 돌려도 결과가 같다. */
@@ -210,7 +182,8 @@ public class MyHomeNoticeIngestService {
         }
         MyHomeNoticeItem validHead = validRows.get(0);
 
-        Optional<NoticeVersion> alreadyStored = noticeVersionRepository.findBySourceNoticeId(pblancId);
+        Optional<NoticeVersion> alreadyStored = noticeVersionRepository
+                .findBySourceSystemAndSourceNoticeId(SourceSystem.MYHOME_PORTAL, pblancId);
         if (alreadyStored.isPresent()) {
             // 마이홈은 정정 때 새 pblancId 를 발급한다. 그런데도 내용이 달라졌다면 원천이 제자리에서 고친 것이라
             // 우리 스냅샷이 조용히 낡는다. 버전을 함부로 만들지는 않되 눈에 보이게 남긴다.
@@ -221,14 +194,15 @@ public class MyHomeNoticeIngestService {
             return IngestReport.oneUnchanged().plus(rejectedRows);
         }
 
-        Optional<NoticeVersion> previous = findPrevious(validHead);
+        String beforeId = SourceValues.trimToNull(validHead.beforePblancId());
+        Optional<NoticeVersion> previous = findPrevious(validHead, beforeId);
         NoticeVersion version = previous
-                .map(prior -> prior.nextVersion(pblancId, snapshotOf(validHead)))
+                .map(prior -> prior.nextVersion(pblancId, beforeId, snapshotOf(validHead)))
                 .orElseGet(() -> NoticeVersion.firstVersion(
-                        pblancId, SourceSystem.MYHOME_PORTAL, snapshotOf(validHead)));
+                        resolveRoot(pblancId), pblancId, beforeId, snapshotOf(validHead)));
 
         noticeVersionRepository.save(version);
-        saveSupplyLines(version, validRows);
+        saveNoticeHousing(version, validRows);
 
         IngestReport stored = previous.isPresent()
                 ? IngestReport.oneVersioned()
@@ -244,16 +218,24 @@ public class MyHomeNoticeIngestService {
                 && rentalPolicy.hasValidPnu(row.pnu());
     }
 
-    private Optional<NoticeVersion> findPrevious(MyHomeNoticeItem head) {
-        String beforeId = SourceValues.trimToNull(head.beforePblancId());
+    private Optional<NoticeVersion> findPrevious(MyHomeNoticeItem head, String beforeId) {
         if (beforeId == null) {
             return Optional.empty();
         }
-        Optional<NoticeVersion> previous = noticeVersionRepository.findBySourceNoticeId(beforeId);
+        Optional<NoticeVersion> previous = noticeVersionRepository
+                .findBySourceSystemAndSourceNoticeId(SourceSystem.MYHOME_PORTAL, beforeId);
         if (previous.isEmpty()) {
             log.warn("정정공고 {}의 이전 공고 {}를 못 찾아 새 체인으로 시작합니다.", head.pblancId(), beforeId);
         }
         return previous;
+    }
+
+    /** 체인이 처음이거나 끊겼을 때 이 pblancId 를 루트로 하는 공고를 찾거나 새로 만든다. */
+    private RecruitmentNotice resolveRoot(String pblancId) {
+        return recruitmentNoticeRepository
+                .findBySourceSystemAndSourceRootNoticeId(SourceSystem.MYHOME_PORTAL, pblancId)
+                .orElseGet(() -> recruitmentNoticeRepository.save(
+                        new RecruitmentNotice(SourceSystem.MYHOME_PORTAL, pblancId)));
     }
 
     /** 공고 단위 값만 담는다. pcUrl 은 행마다 달라서(houseSn 이 붙는다) 여기 쓰면 안 되고 url 을 쓴다. */
@@ -273,17 +255,11 @@ public class MyHomeNoticeIngestService {
                 SourceValues.trimToNull(item.refrnc()));
     }
 
-    private void saveSupplyLines(NoticeVersion version, List<MyHomeNoticeItem> rows) {
-        int matched = 0;
+    private void saveNoticeHousing(NoticeVersion version, List<MyHomeNoticeItem> rows) {
         for (int order = 0; order < rows.size(); order++) {
             MyHomeNoticeItem row = rows.get(order);
-            HousingComplex complex = matchComplex(row);
-            if (complex != null) {
-                matched++;
-            }
-            supplyLineRepository.save(new SupplyLine(
+            noticeHousingRepository.save(new NoticeHousing(
                     version,
-                    complex,
                     order,
                     row.houseSn(),
                     row.sumSuplyCo(),
@@ -292,7 +268,7 @@ public class MyHomeNoticeIngestService {
                     SourceValues.trimToNull(row.pcUrl()),
                     SourceValues.trimToNull(row.mobileUrl())));
         }
-        log.debug("공고 {} 공급행 {}건 중 단지 매칭 {}건", version.getSourceNoticeId(), rows.size(), matched);
+        log.debug("공고 {} 공급행 {}건 저장", version.getSourceNoticeId(), rows.size());
     }
 
     /** 단지에 붙든 안 붙든 공고가 그때 뭐라고 했는지는 그대로 남긴다. */
@@ -311,29 +287,5 @@ public class MyHomeNoticeIngestService {
 
     private RentTerms rentTermsOf(MyHomeNoticeItem row) {
         return new RentTerms(row.rentGtn(), row.enty(), row.surlus(), row.mtRntchrg());
-    }
-
-    /** 단지명은 매입임대에서 지역명("경기도 수원시")이 오기 때문에 이름 매칭은 위험하다. PNU 만 쓴다. */
-    private HousingComplex matchComplex(MyHomeNoticeItem row) {
-        return matchByPnu(SourceValues.trimToNull(row.pnu()));
-    }
-
-    /**
-     * PNU 는 단지를 <b>유일하게 지목하지 않는다.</b> 같은 필지에 여러 hsmpSn 이 등록되기 때문이다.
-     * 후보가 둘 이상이면 어느 쪽인지 알 방법이 없어서 <b>붙이지 않는다.</b>
-     * 잘못 붙은 단지를 화면에 보여 주는 것보다 안 붙은 채로 두는 편이 낫다.
-     */
-    private HousingComplex matchByPnu(String pnu) {
-        if (pnu == null) {
-            return null;
-        }
-        List<HousingComplex> candidates = complexRepository.findAllByAddressPnu(pnu);
-        if (candidates.size() == 1) {
-            return candidates.get(0);
-        }
-        if (candidates.size() > 1) {
-            log.debug("PNU {} 에 단지가 {}개라 어느 쪽인지 정할 수 없어 붙이지 않습니다.", pnu, candidates.size());
-        }
-        return null;
     }
 }

@@ -28,12 +28,15 @@ import java.util.Objects;
  *
  * <p><b>PK</b> — 설계 표에는 noticeId 가 PK로 적혀 있었는데, 그러면 공고당 행이 하나뿐이라
  * versionNumber 와 supersedesVersionId 가 존재할 수 없다. PK는 버전 자신의 id 로 두고
- * (noticeId, versionNumber) 에 유니크를 걸었다.
+ * (recruitmentNoticeId, versionNumber) 에 유니크를 걸었다.
  *
- * <p><b>noticeId 와 sourceNoticeId 가 따로인 이유</b> — 마이홈은 정정공고를 낼 때 <em>새 pblancId</em>를
+ * <p><b>recruitmentNotice 와 sourceNoticeId 가 따로인 이유</b> — 마이홈은 정정공고를 낼 때 <em>새 pblancId</em>를
  * 발급하고 beforePblancId 로 이전 공고를 가리킨다. 즉 pblancId 는 "공고"가 아니라 "공고의 한 버전"이다.
  * 실데이터에서 21001 ← 20942 ← 20893 ← 20680 처럼 4단계 체인도 나왔다.
- * 그래서 sourceNoticeId = 이 버전의 pblancId, noticeId = 체인 맨 앞(원공고)의 pblancId 로 나눴다.
+ * 그래서 sourceNoticeId = 이 버전의 pblancId, recruitmentNotice = 체인 전체를 묶는 루트({@link RecruitmentNotice})로 나눴다.
+ *
+ * <p><b>beforeSourceNoticeId</b> 는 원천이 준 이전 pblancId 원문을 그대로 남긴다. 실제 체인 연결은
+ * supersedesVersion(FK)이 담당하지만, 원천 순서가 깨져 그 FK 를 못 채웠을 때도 원문이 뭐였는지는 남아야 한다.
  *
  * <p>수정자를 두지 않은 것도 의도다. 내용이 바뀌면 고치는 게 아니라 {@link #nextVersion} 으로 새 행을 쌓는다.
  */
@@ -41,8 +44,10 @@ import java.util.Objects;
 @Table(
         name = "notice_version",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uk_notice_version", columnNames = {"notice_id", "version_number"}),
-                @UniqueConstraint(name = "uk_notice_version_source", columnNames = "source_notice_id")
+                @UniqueConstraint(name = "uk_notice_version",
+                        columnNames = {"recruitment_notice_id", "version_number"}),
+                @UniqueConstraint(name = "uk_notice_version_source",
+                        columnNames = {"source_system", "source_notice_id"})
         }
 )
 @Getter
@@ -53,13 +58,18 @@ public class NoticeVersion {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** 버전 체인 맨 앞(원공고)의 원천 ID. 같은 공고의 모든 버전이 이 값을 공유한다. */
-    @Column(name = "notice_id", nullable = false, length = 50)
-    private String noticeId;
+    /** 이 버전이 속한 공고 루트. 같은 공고의 모든 버전(원공고 + 정정 체인)이 같은 루트를 가리킨다. */
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "recruitment_notice_id", nullable = false)
+    private RecruitmentNotice recruitmentNotice;
 
     /** 이 버전 자신의 원천 ID(pblancId). 다음 정정공고가 beforePblancId 로 여기를 가리킨다. */
     @Column(name = "source_notice_id", nullable = false, length = 50)
     private String sourceNoticeId;
+
+    /** 원천 beforePblancId 원문. supersedesVersion 을 못 찾았을 때도(체인이 끊겼을 때) 이 값은 남는다. */
+    @Column(name = "before_source_notice_id", length = 50)
+    private String beforeSourceNoticeId;
 
     @Column(name = "version_number", nullable = false)
     private int versionNumber;
@@ -127,17 +137,18 @@ public class NoticeVersion {
     @Column(name = "contact", length = 200)
     private String contact;
 
-    private NoticeVersion(String noticeId,
+    private NoticeVersion(RecruitmentNotice recruitmentNotice,
                           String sourceNoticeId,
+                          String beforeSourceNoticeId,
                           int versionNumber,
                           NoticeVersion supersedesVersion,
-                          SourceSystem sourceSystem,
                           NoticeSnapshot snapshot) {
-        this.noticeId = noticeId;
+        this.recruitmentNotice = recruitmentNotice;
         this.sourceNoticeId = sourceNoticeId;
+        this.beforeSourceNoticeId = beforeSourceNoticeId;
         this.versionNumber = versionNumber;
         this.supersedesVersion = supersedesVersion;
-        this.sourceSystem = sourceSystem;
+        this.sourceSystem = recruitmentNotice.getSourceSystem();
         this.noticeChangeStatus = snapshot.changeStatus();
         this.publishedAt = snapshot.publishedAt();
         this.title = snapshot.title();
@@ -153,16 +164,17 @@ public class NoticeVersion {
         this.contact = snapshot.contact();
     }
 
-    public static NoticeVersion firstVersion(String sourceNoticeId,
-                                            SourceSystem sourceSystem,
+    public static NoticeVersion firstVersion(RecruitmentNotice recruitmentNotice,
+                                            String sourceNoticeId,
+                                            String beforeSourceNoticeId,
                                             NoticeSnapshot snapshot) {
-        return new NoticeVersion(sourceNoticeId, sourceNoticeId, 1, null, sourceSystem, snapshot);
+        return new NoticeVersion(recruitmentNotice, sourceNoticeId, beforeSourceNoticeId, 1, null, snapshot);
     }
 
     /** 이 버전 뒤에 붙는 새 스냅샷. 기존 행은 그대로 남는다. */
-    public NoticeVersion nextVersion(String sourceNoticeId, NoticeSnapshot snapshot) {
-        return new NoticeVersion(this.noticeId, sourceNoticeId, this.versionNumber + 1, this,
-                this.sourceSystem, snapshot);
+    public NoticeVersion nextVersion(String sourceNoticeId, String beforeSourceNoticeId, NoticeSnapshot snapshot) {
+        return new NoticeVersion(this.recruitmentNotice, sourceNoticeId, beforeSourceNoticeId,
+                this.versionNumber + 1, this, snapshot);
     }
 
     /**

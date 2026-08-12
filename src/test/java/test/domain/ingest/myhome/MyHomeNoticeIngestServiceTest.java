@@ -7,24 +7,25 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.util.MultiValueMap;
 import org.springframework.transaction.PlatformTransactionManager;
-import test.domain.housing.ComplexRentalProgramRepository;
 import test.domain.housing.HouseType;
-import test.domain.housing.HousingComplexRepository;
-import test.domain.housing.HousingProviderAgencyRepository;
 import test.domain.housing.SupplyType;
-import test.domain.housing.UnitTypeRepository;
 import test.domain.ingest.IngestReport;
 import test.domain.ingest.IngestRejectionReason;
 import test.domain.ingest.ConstructionRentalPolicy;
 import test.domain.ingest.OpenApiClient;
 import test.domain.notice.NoticeChangeStatus;
+import test.domain.notice.NoticeHousing;
+import test.domain.notice.NoticeHousingRepository;
 import test.domain.notice.NoticeVersion;
 import test.domain.notice.NoticeVersionRepository;
+import test.domain.notice.RecruitmentNoticeRepository;
 import test.domain.notice.SuppliedHousing;
-import test.domain.notice.SupplyLine;
-import test.domain.notice.SupplyLineRepository;
+import test.domain.source.SourceSystem;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.time.LocalDate;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import tools.jackson.databind.json.JsonMapper;
@@ -36,17 +37,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MyHomeNoticeIngestServiceTest {
 
     @Autowired
+    private RecruitmentNoticeRepository recruitmentNoticeRepository;
+    @Autowired
     private NoticeVersionRepository noticeVersionRepository;
     @Autowired
-    private SupplyLineRepository supplyLineRepository;
-    @Autowired
-    private HousingComplexRepository complexRepository;
-    @Autowired
-    private ComplexRentalProgramRepository programRepository;
-    @Autowired
-    private UnitTypeRepository unitTypeRepository;
-    @Autowired
-    private HousingProviderAgencyRepository agencyRepository;
+    private NoticeHousingRepository noticeHousingRepository;
     @Autowired
     private PlatformTransactionManager transactionManager;
 
@@ -55,7 +50,7 @@ class MyHomeNoticeIngestServiceTest {
     @BeforeEach
     void setUp() {
         service = new MyHomeNoticeIngestService(
-                null, noticeVersionRepository, supplyLineRepository, complexRepository,
+                null, recruitmentNoticeRepository, noticeVersionRepository, noticeHousingRepository,
                 new ConstructionRentalPolicy(), transactionManager);
     }
 
@@ -66,8 +61,10 @@ class MyHomeNoticeIngestServiceTest {
 
         assertThat(report).isEqualTo(new IngestReport(1, 1, 0, 0, Map.of()));
 
-        NoticeVersion original = noticeVersionRepository.findBySourceNoticeId("20965").orElseThrow();
-        NoticeVersion correction = noticeVersionRepository.findBySourceNoticeId("20989").orElseThrow();
+        NoticeVersion original = noticeVersionRepository
+                .findBySourceSystemAndSourceNoticeId(SourceSystem.MYHOME_PORTAL, "20965").orElseThrow();
+        NoticeVersion correction = noticeVersionRepository
+                .findBySourceSystemAndSourceNoticeId(SourceSystem.MYHOME_PORTAL, "20989").orElseThrow();
 
         assertThat(original.getVersionNumber()).isEqualTo(1);
         assertThat(original.getNoticeChangeStatus()).isEqualTo(NoticeChangeStatus.ORIGINAL);
@@ -76,8 +73,9 @@ class MyHomeNoticeIngestServiceTest {
         assertThat(correction.getVersionNumber()).isEqualTo(2);
         assertThat(correction.getNoticeChangeStatus()).isEqualTo(NoticeChangeStatus.CORRECTION);
         assertThat(correction.getSupersedesVersion().getId()).isEqualTo(original.getId());
-        // 두 버전이 같은 공고라는 사실은 noticeId 가 붙든다.
-        assertThat(correction.getNoticeId()).isEqualTo("20965");
+        // 두 버전이 같은 공고라는 사실은 recruitmentNotice 가 붙든다.
+        assertThat(correction.getRecruitmentNotice().getId()).isEqualTo(original.getRecruitmentNotice().getId());
+        assertThat(correction.getBeforeSourceNoticeId()).isEqualTo("20965");
     }
 
     @Test
@@ -85,11 +83,13 @@ class MyHomeNoticeIngestServiceTest {
     void keepsSupersededVersionIntact() {
         service.apply(MyHomeFixtures.noticeItems());
 
-        NoticeVersion original = noticeVersionRepository.findBySourceNoticeId("20965").orElseThrow();
+        NoticeVersion original = noticeVersionRepository
+                .findBySourceSystemAndSourceNoticeId(SourceSystem.MYHOME_PORTAL, "20965").orElseThrow();
         assertThat(original.getApplicationBeginOn()).isEqualTo(LocalDate.of(2026, 8, 11));
         assertThat(original.getApplicationEndOn()).isEqualTo(LocalDate.of(2026, 8, 13));
 
-        NoticeVersion correction = noticeVersionRepository.findBySourceNoticeId("20989").orElseThrow();
+        NoticeVersion correction = noticeVersionRepository
+                .findBySourceSystemAndSourceNoticeId(SourceSystem.MYHOME_PORTAL, "20989").orElseThrow();
         assertThat(correction.getApplicationBeginOn()).isEqualTo(LocalDate.of(2026, 8, 18));
         assertThat(correction.getWinnerAnnouncedOn()).isEqualTo(LocalDate.of(2026, 11, 20));
     }
@@ -99,7 +99,8 @@ class MyHomeNoticeIngestServiceTest {
     void putsNoticeLevelAndRowLevelValuesInTheRightPlace() {
         service.apply(MyHomeFixtures.noticeItems());
 
-        NoticeVersion correction = noticeVersionRepository.findBySourceNoticeId("20989").orElseThrow();
+        NoticeVersion correction = noticeVersionRepository
+                .findBySourceSystemAndSourceNoticeId(SourceSystem.MYHOME_PORTAL, "20989").orElseThrow();
         assertThat(correction.getSupplyInstitutionName()).isEqualTo("LH");
         assertThat(correction.getSupplyTypeName()).isEqualTo("행복주택");
         assertThat(correction.getHouseTypeName()).isEqualTo("아파트");
@@ -110,10 +111,10 @@ class MyHomeNoticeIngestServiceTest {
         // 공고 단위 URL은 pcUrl 이 아니라 url 이다. pcUrl 은 houseSn 이 붙어 행마다 다르다.
         assertThat(correction.getDetailUrl()).contains("apply.lh.or.kr").doesNotContain("houseSn");
 
-        List<SupplyLine> lines = supplyLineRepository.findByNoticeVersionOrderByDisplayOrder(correction);
-        assertThat(lines).extracting(SupplyLine::getDetailUrl)
+        List<NoticeHousing> lines = noticeHousingRepository.findByNoticeVersionOrderByDisplayOrder(correction);
+        assertThat(lines).extracting(NoticeHousing::getDetailUrl)
                 .allSatisfy(url -> assertThat(url).contains("myhome.go.kr"));
-        assertThat(lines).extracting(SupplyLine::getDetailUrl)
+        assertThat(lines).extracting(NoticeHousing::getDetailUrl)
                 .containsExactly(
                         "https://www.myhome.go.kr/hws/portal/sch/selectRsdtRcritNtcDetailView.do?pblancId=20989&houseSn=1",
                         "https://www.myhome.go.kr/hws/portal/sch/selectRsdtRcritNtcDetailView.do?pblancId=20989&houseSn=3");
@@ -124,15 +125,16 @@ class MyHomeNoticeIngestServiceTest {
     void turnsRowsIntoSupplyLines() {
         service.apply(MyHomeFixtures.noticeItems());
 
-        NoticeVersion correction = noticeVersionRepository.findBySourceNoticeId("20989").orElseThrow();
-        List<SupplyLine> lines = supplyLineRepository.findByNoticeVersionOrderByDisplayOrder(correction);
+        NoticeVersion correction = noticeVersionRepository
+                .findBySourceSystemAndSourceNoticeId(SourceSystem.MYHOME_PORTAL, "20989").orElseThrow();
+        List<NoticeHousing> lines = noticeHousingRepository.findByNoticeVersionOrderByDisplayOrder(correction);
 
         assertThat(lines).hasSize(2);
-        assertThat(lines).extracting(SupplyLine::getSupplyCount).containsExactly(50, 117);
-        assertThat(lines).extracting(SupplyLine::getDisplayOrder).containsExactly(0, 1);
-        assertThat(lines).extracting(SupplyLine::getHouseSn).containsExactly(1, 3);
+        assertThat(lines).extracting(NoticeHousing::getSupplyCount).containsExactly(50, 117);
+        assertThat(lines).extracting(NoticeHousing::getDisplayOrder).containsExactly(0, 1);
+        assertThat(lines).extracting(NoticeHousing::getHouseSn).containsExactly(1, 3);
 
-        SupplyLine guri = lines.get(0);
+        NoticeHousing guri = lines.get(0);
         SuppliedHousing housing = guri.getSuppliedHousing();
         assertThat(housing.getComplexName()).isEqualTo("구리수택");
         assertThat(housing.getPnu()).isEqualTo("4131010500108520000");
@@ -147,21 +149,16 @@ class MyHomeNoticeIngestServiceTest {
         assertThat(guri.getRentTerms().getMonthlyRent()).isEqualTo(156_000L);
     }
 
+    /**
+     * 원래 의도: 이미 적재된 단지가 있으면 PNU로 공급행에 자동으로 붙는다.
+     * 이제 {@link NoticeHousing} 은 카탈로그 FK를 아예 갖지 않으므로 그 붙임은 이 서비스에서 일어날 수 없다.
+     * PNU 매칭의 실제 의미(Task 8의 파생 matcher)는 여기서 검증하지 않고, 지금 참인 구조적 사실만 검증한다.
+     */
     @Test
-    @DisplayName("이미 적재된 단지가 있으면 PNU로 공급행에 붙는다")
+    @DisplayName("정정: NoticeHousing은 카탈로그 FK를 갖지 않는다 (PNU 매칭은 Task 8의 matcher로 이동)")
     void attachesComplexByPnu() {
-        new MyHomeComplexIngestService(null, complexRepository, programRepository, unitTypeRepository,
-                agencyRepository, new ConstructionRentalPolicy(), transactionManager, new MyHomeRegionCatalog())
-                .apply(MyHomeFixtures.constructedComplexItems());
-        long complexCountBefore = complexRepository.count();
-
-        service.apply(MyHomeFixtures.noticeItems());
-
-        // 픽스처의 단지(노원 중계센트럴파크)와 공고의 단지(구리·남양주)는 PNU가 다르니 붙지 않아야 한다.
-        assertThat(supplyLineRepository.findAll()).allSatisfy(
-                line -> assertThat(line.getComplex()).isNull());
-        // 그리고 공고 적재가 단지를 새로 만들어서도 안 된다.
-        assertThat(complexRepository.count()).isEqualTo(complexCountBefore);
+        assertThat(Arrays.stream(NoticeHousing.class.getDeclaredFields()).map(Field::getName))
+                .doesNotContain("complex", "housingComplex");
     }
 
     @Test
@@ -172,7 +169,7 @@ class MyHomeNoticeIngestServiceTest {
         assertThat(report.rejectedByReason())
                 .containsEntry(IngestRejectionReason.UNSUPPORTED_SUPPLY_TYPE, 1);
         assertThat(noticeVersionRepository.count()).isZero();
-        assertThat(supplyLineRepository.count()).isZero();
+        assertThat(noticeHousingRepository.count()).isZero();
     }
 
     @Test
@@ -183,7 +180,7 @@ class MyHomeNoticeIngestServiceTest {
         assertThat(report.created()).isOne();
         assertThat(report.rejectedByReason())
                 .containsEntry(IngestRejectionReason.INVALID_SOURCE_ROW, 1);
-        assertThat(supplyLineRepository.findAll()).singleElement()
+        assertThat(noticeHousingRepository.findAll()).singleElement()
                 .satisfies(line -> {
                     assertThat(line.getDisplayOrder()).isZero();
                     assertThat(line.getSuppliedHousing().getComplexName()).isEqualTo("정상단지");
@@ -198,7 +195,7 @@ class MyHomeNoticeIngestServiceTest {
         assertThat(report.rejectedByReason())
                 .containsEntry(IngestRejectionReason.INVALID_SOURCE_ROW, 1);
         assertThat(noticeVersionRepository.count()).isZero();
-        assertThat(supplyLineRepository.count()).isZero();
+        assertThat(noticeHousingRepository.count()).isZero();
     }
 
     @Test
@@ -221,15 +218,16 @@ class MyHomeNoticeIngestServiceTest {
             }
         };
         service = new MyHomeNoticeIngestService(
-                pagedClient, noticeVersionRepository, supplyLineRepository, complexRepository,
+                pagedClient, recruitmentNoticeRepository, noticeVersionRepository, noticeHousingRepository,
                 new ConstructionRentalPolicy(), transactionManager);
 
         IngestReport report = service.ingest(MyHomeNoticeIngestService.RENTAL_PATH, 1, 10);
 
-        NoticeVersion saved = noticeVersionRepository.findBySourceNoticeId("20989").orElseThrow();
+        NoticeVersion saved = noticeVersionRepository
+                .findBySourceSystemAndSourceNoticeId(SourceSystem.MYHOME_PORTAL, "20989").orElseThrow();
         assertThat(report.created()).isOne();
         assertThat(report.unchanged()).isZero();
-        assertThat(supplyLineRepository.findByNoticeVersionOrderByDisplayOrder(saved)).hasSize(2);
+        assertThat(noticeHousingRepository.findByNoticeVersionOrderByDisplayOrder(saved)).hasSize(2);
     }
 
     @Test
@@ -240,7 +238,7 @@ class MyHomeNoticeIngestServiceTest {
         assertThat(report.rejectedByReason())
                 .containsEntry(IngestRejectionReason.INVALID_SOURCE_ROW, 1);
         assertThat(noticeVersionRepository.count()).isZero();
-        assertThat(supplyLineRepository.count()).isZero();
+        assertThat(noticeHousingRepository.count()).isZero();
     }
 
     @Test
@@ -262,28 +260,19 @@ class MyHomeNoticeIngestServiceTest {
 
         assertThat(second).isEqualTo(new IngestReport(0, 0, 2, 0, Map.of()));
         assertThat(noticeVersionRepository.count()).isEqualTo(2);
-        assertThat(supplyLineRepository.count()).isEqualTo(3);
+        assertThat(noticeHousingRepository.count()).isEqualTo(3);
     }
 
+    /**
+     * 원래 의도: 단지를 나중에 적재하면 재매칭으로 공급행에 뒤늦게 붙는다.
+     * 그 재매칭 연결 지점(rematchComplexes)이 이 서비스에서 사라졌다는 사실만 지금 확인한다.
+     * 실제 재매칭 의미는 Task 8의 파생 matcher가 갖는다.
+     */
     @Test
-    @DisplayName("단지를 나중에 적재하면 재매칭으로 뒤늦게 붙는다")
+    @DisplayName("정정: 이 서비스에는 더 이상 재매칭 메서드가 없다 (Task 8의 matcher로 이동)")
     void rematchesComplexesIngestedLater() {
-        // 공고가 먼저 들어온다. 이 시점엔 단지가 없어서 아무것도 못 붙는다.
-        service.apply(MyHomeFixtures.noticeItems());
-        assertThat(supplyLineRepository.findAll()).allSatisfy(
-                line -> assertThat(line.getComplex()).isNull());
-
-        // 공고의 PNU 를 가진 단지가 뒤늦게 들어온다.
-        new MyHomeComplexIngestService(null, complexRepository, programRepository, unitTypeRepository,
-                agencyRepository, new ConstructionRentalPolicy(), transactionManager, new MyHomeRegionCatalog())
-                .apply(MyHomeFixtures.complexItemsMatchingNotice());
-
-        // 공급행 3개(구리 2 + 남양주 1)가 단지 2개에 붙는다.
-        assertThat(service.rematchComplexes()).isEqualTo(3);
-        assertThat(supplyLineRepository.findAll())
-                .filteredOn(line -> line.getComplex() != null)
-                .hasSize(3);
-        // 두 번 돌려도 더 붙을 게 없다.
-        assertThat(service.rematchComplexes()).isZero();
+        assertThat(Arrays.stream(MyHomeNoticeIngestService.class.getDeclaredMethods())
+                .map(Method::getName))
+                .doesNotContain("rematchComplexes");
     }
 }

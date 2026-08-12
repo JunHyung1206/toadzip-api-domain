@@ -18,6 +18,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class NoticeSupplementPersistenceTest {
 
     @Autowired
+    private RecruitmentNoticeRepository recruitmentNoticeRepository;
+    @Autowired
     private NoticeVersionRepository noticeVersionRepository;
     @Autowired
     private NoticeSupplementRepository supplementRepository;
@@ -35,8 +37,10 @@ class NoticeSupplementPersistenceTest {
     @Test
     @DisplayName("LH 보충 스냅샷을 한 번 저장하면 모든 자식과 입주예정월이 함께 보존된다")
     void savesSupplementAggregate() {
+        RecruitmentNotice root = recruitmentNoticeRepository.save(
+                new RecruitmentNotice(SourceSystem.MYHOME_PORTAL, "21006"));
         NoticeVersion notice = noticeVersionRepository.save(NoticeVersion.firstVersion(
-                "21006", SourceSystem.MYHOME_PORTAL, snapshot()));
+                root, "21006", null, snapshot()));
         NoticeSupplement supplement = new NoticeSupplement(
                 notice, SourceSystem.LH_CHEONGYAK_PLUS, "공급일정 일부 수정");
         supplement.addSchedule(0, "성남금토 A-4블록", "2026.08.24 10:00 ~ 2026.08.26 16:10",

@@ -8,11 +8,11 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.PlatformTransactionManager;
-import test.domain.housing.HousingComplexRepository;
 import test.domain.ingest.ConstructionRentalPolicy;
+import test.domain.notice.NoticeHousing;
+import test.domain.notice.NoticeHousingRepository;
 import test.domain.notice.NoticeVersionRepository;
-import test.domain.notice.SupplyLine;
-import test.domain.notice.SupplyLineRepository;
+import test.domain.notice.RecruitmentNoticeRepository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -25,9 +25,9 @@ import static org.mockito.Mockito.when;
 class MyHomeNoticeTransactionTest {
 
     @Autowired
-    private NoticeVersionRepository noticeVersionRepository;
+    private RecruitmentNoticeRepository recruitmentNoticeRepository;
     @Autowired
-    private HousingComplexRepository complexRepository;
+    private NoticeVersionRepository noticeVersionRepository;
     @Autowired
     private PlatformTransactionManager transactionManager;
 
@@ -35,11 +35,11 @@ class MyHomeNoticeTransactionTest {
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     @DisplayName("공급행 저장이 실패하면 같은 공고버전도 남지 않는다")
     void rollsBackWholeNoticeWhenSupplyLineFails() {
-        SupplyLineRepository failingSupplyLineRepository = mock(SupplyLineRepository.class);
-        when(failingSupplyLineRepository.save(any(SupplyLine.class)))
+        NoticeHousingRepository failingNoticeHousingRepository = mock(NoticeHousingRepository.class);
+        when(failingNoticeHousingRepository.save(any(NoticeHousing.class)))
                 .thenThrow(new IllegalStateException("공급행 저장 실패"));
         MyHomeNoticeIngestService service = new MyHomeNoticeIngestService(
-                null, noticeVersionRepository, failingSupplyLineRepository, complexRepository,
+                null, recruitmentNoticeRepository, noticeVersionRepository, failingNoticeHousingRepository,
                 new ConstructionRentalPolicy(), transactionManager);
 
         assertThatThrownBy(() -> service.apply(

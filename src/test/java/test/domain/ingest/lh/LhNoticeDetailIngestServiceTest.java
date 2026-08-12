@@ -19,6 +19,8 @@ import test.domain.notice.NoticeSupplement;
 import test.domain.notice.NoticeSupplementRepository;
 import test.domain.notice.NoticeVersion;
 import test.domain.notice.NoticeVersionRepository;
+import test.domain.notice.RecruitmentNotice;
+import test.domain.notice.RecruitmentNoticeRepository;
 import test.domain.source.SourceSystem;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -39,6 +41,8 @@ class LhNoticeDetailIngestServiceTest {
     private static final ObjectMapper MAPPER = JsonMapper.builder().build();
 
     @Autowired
+    private RecruitmentNoticeRepository recruitmentNoticeRepository;
+    @Autowired
     private NoticeVersionRepository noticeVersionRepository;
     @Autowired
     private NoticeAttachmentRepository attachmentRepository;
@@ -52,8 +56,10 @@ class LhNoticeDetailIngestServiceTest {
 
     @BeforeEach
     void setUp() {
+        RecruitmentNotice root = recruitmentNoticeRepository.save(
+                new RecruitmentNotice(SourceSystem.MYHOME_PORTAL, "20942"));
         lhNotice = noticeVersionRepository.save(NoticeVersion.firstVersion(
-                "20942", SourceSystem.MYHOME_PORTAL, snapshot(
+                root, "20942", null, snapshot(
                         "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do"
                                 + "?panId=2015122300020501&ccrCnntSysDsCd=03&uppAisTpCd=06&aisTpCd=10&mi=1026")));
         service = new LhNoticeDetailIngestService(
