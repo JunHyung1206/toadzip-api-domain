@@ -38,3 +38,6 @@ out/
 
 ### H2 파일 DB ###
 data/
+
+# Local isolated implementation worktrees
+.worktrees/
