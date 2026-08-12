@@ -11,6 +11,8 @@ import org.springframework.web.bind.annotation.RestController;
 import test.domain.ingest.lh.LhNoticeDetailIngestService;
 import test.domain.ingest.myhome.MyHomeComplexIngestService;
 import test.domain.ingest.myhome.MyHomeNoticeIngestService;
+import test.domain.match.NoticeHousingCatalogMatchService;
+import test.domain.match.NoticeHousingLhMatchService;
 import tools.jackson.databind.JsonNode;
 
 /** 적재 트리거와 원천 응답 확인용. 운영에 열 엔드포인트가 아니라 개발 중 확인용이다. */
@@ -21,6 +23,8 @@ public class IngestController {
     private final MyHomeComplexIngestService complexIngestService;
     private final MyHomeNoticeIngestService noticeIngestService;
     private final LhNoticeDetailIngestService lhNoticeDetailIngestService;
+    private final NoticeHousingCatalogMatchService catalogMatchService;
+    private final NoticeHousingLhMatchService lhMatchService;
     private final OpenApiClient lhApiClient;
     private final OpenApiClient myhomeNoticeApiClient;
     private final OpenApiClient myhomeComplexApiClient;
@@ -28,24 +32,26 @@ public class IngestController {
     public IngestController(MyHomeComplexIngestService complexIngestService,
                             MyHomeNoticeIngestService noticeIngestService,
                             LhNoticeDetailIngestService lhNoticeDetailIngestService,
+                            NoticeHousingCatalogMatchService catalogMatchService,
+                            NoticeHousingLhMatchService lhMatchService,
                             @Qualifier("lhApiClient") OpenApiClient lhApiClient,
                             @Qualifier("myhomeNoticeApiClient") OpenApiClient myhomeNoticeApiClient,
                             @Qualifier("myhomeComplexApiClient") OpenApiClient myhomeComplexApiClient) {
         this.complexIngestService = complexIngestService;
         this.noticeIngestService = noticeIngestService;
         this.lhNoticeDetailIngestService = lhNoticeDetailIngestService;
+        this.catalogMatchService = catalogMatchService;
+        this.lhMatchService = lhMatchService;
         this.lhApiClient = lhApiClient;
         this.myhomeNoticeApiClient = myhomeNoticeApiClient;
         this.myhomeComplexApiClient = myhomeComplexApiClient;
     }
 
-    /** 원천이 시군구 단위로만 조회를 열어 둬서 지역 코드가 필수다. */
+    /** {@link MyHomeComplexIngestService#ingestNationwide} 로 전국 256개 시군구를 돈다. */
     @PostMapping("/complexes")
-    public IngestReport ingestComplexes(@RequestParam String brtcCode,
-                                        @RequestParam String signguCode,
-                                        @RequestParam(defaultValue = "200") int pageSize,
+    public IngestReport ingestComplexes(@RequestParam(defaultValue = "200") int pageSize,
                                         @RequestParam(defaultValue = "50") int maxPages) {
-        return complexIngestService.ingest(brtcCode, signguCode, pageSize, maxPages);
+        return complexIngestService.ingestNationwide(pageSize, maxPages);
     }
 
     /** 임대공고만 받는다. 분양공고를 안 담는 이유는 {@link MyHomeNoticeIngestService#RENTAL_PATH} 에 있다. */
@@ -62,6 +68,18 @@ public class IngestController {
     @PostMapping("/notice-details")
     public IngestReport ingestNoticeDetails() {
         return lhNoticeDetailIngestService.ingest();
+    }
+
+    /** {@link NoticeHousingCatalogMatchService} 로 공고 세대를 단지 카탈로그 PNU와 잇는다. */
+    @PostMapping("/matches/catalog")
+    public void matchCatalog(@RequestParam Long noticeVersionId) {
+        catalogMatchService.match(noticeVersionId, "catalog-pnu-v1");
+    }
+
+    /** {@link NoticeHousingLhMatchService} 로 공고 세대를 LH 상세 주소·세대수와 잇는다. */
+    @PostMapping("/matches/lh")
+    public void matchLh(@RequestParam Long noticeVersionId) {
+        lhMatchService.match(noticeVersionId, "lh-address-unit-v1");
     }
 
     /**
