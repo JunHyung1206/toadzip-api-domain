@@ -30,7 +30,6 @@ import test.domain.ingest.SourceValues;
 import test.domain.source.SourceSystem;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -53,8 +52,6 @@ public class MyHomeComplexIngestService {
 
     private static final String PATH = "rentalHouseGwList";
     private static final String LIST_POINTER = "/response/body/item";
-    private static final int REGION_CODE_LENGTH = 5;
-    private static final int PROVINCE_CODE_LENGTH = 2;
 
     private final OpenApiClient myhomeApiClient;
     private final HousingComplexRepository complexRepository;
@@ -82,57 +79,6 @@ public class MyHomeComplexIngestService {
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.regionCatalog = regionCatalog;
-    }
-
-    /**
-     * 원천이 광역시도·시군구 단위로만 조회를 열어 둬서 전국을 받으려면 시군구를 돌아야 한다.
-     *
-     * @param brtcCode   광역시도 코드 (예: 11 서울, 41 경기)
-     * @param signguCode 시군구 코드 (예: 110 종로구)
-     */
-    public IngestReport ingest(String brtcCode, String signguCode, int pageSize, int maxPages) {
-        IngestReport report = IngestReport.empty();
-        for (int page = 1; page <= maxPages; page++) {
-            MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
-            params.add("brtcCode", brtcCode);
-            params.add("signguCode", signguCode);
-            params.add("numOfRows", String.valueOf(pageSize));
-            params.add("pageNo", String.valueOf(page));
-
-            List<MyHomeComplexItem> items =
-                    myhomeApiClient.getList(PATH, params, LIST_POINTER, MyHomeComplexItem.class);
-            log.info("마이홈 단지 {}-{} {}페이지 {}행", brtcCode, signguCode, page, items.size());
-            if (items.isEmpty()) {
-                break;
-            }
-            report = report.plus(apply(items));
-            if (items.size() < pageSize) {
-                break;
-            }
-        }
-        return report;
-    }
-
-    /**
-     * 여러 시군구를 한 번에 돈다.
-     *
-     * @param regionCodes 5자리 지역코드 목록. 앞 2자리가 brtcCode, 뒤 3자리가 signguCode 다
-     */
-    public IngestReport ingestRegions(Collection<String> regionCodes, int pageSize, int maxPages) {
-        IngestReport report = IngestReport.empty();
-        int done = 0;
-        for (String regionCode : regionCodes) {
-            if (regionCode == null || regionCode.length() != REGION_CODE_LENGTH) {
-                log.warn("지역코드 형식이 아니라 건너뜁니다: {}", regionCode);
-                continue;
-            }
-            report = report.plus(ingest(
-                    regionCode.substring(0, PROVINCE_CODE_LENGTH),
-                    regionCode.substring(PROVINCE_CODE_LENGTH),
-                    pageSize, maxPages));
-            log.info("지역 {}/{} 완료 ({}) — 누적 {}", ++done, regionCodes.size(), regionCode, report);
-        }
-        return report;
     }
 
     /**
