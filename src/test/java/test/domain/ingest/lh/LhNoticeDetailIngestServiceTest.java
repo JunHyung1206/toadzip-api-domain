@@ -8,15 +8,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import jakarta.persistence.EntityManager;
 import test.domain.ingest.IngestReport;
+import test.domain.ingest.IngestRejectionReason;
 import test.domain.ingest.OpenApiClient;
 import test.domain.notice.NoticeAttachment;
 import test.domain.notice.NoticeAttachmentRepository;
 import test.domain.notice.NoticeChangeStatus;
 import test.domain.notice.NoticeSnapshot;
-import test.domain.notice.NoticeSupplement;
-import test.domain.notice.NoticeSupplementRepository;
+import test.domain.notice.LhNoticeSupplement;
+import test.domain.notice.LhNoticeSupplementRepository;
 import test.domain.notice.NoticeVersion;
 import test.domain.notice.NoticeVersionRepository;
 import test.domain.notice.RecruitmentNotice;
@@ -26,9 +30,12 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
+import java.time.ZoneId;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -39,6 +46,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class LhNoticeDetailIngestServiceTest {
 
     private static final ObjectMapper MAPPER = JsonMapper.builder().build();
+    private static final Clock FIXED_CLOCK =
+            Clock.fixed(Instant.parse("2026-08-12T04:00:00Z"), ZoneId.of("Asia/Seoul"));
 
     @Autowired
     private RecruitmentNoticeRepository recruitmentNoticeRepository;
@@ -47,7 +56,9 @@ class LhNoticeDetailIngestServiceTest {
     @Autowired
     private NoticeAttachmentRepository attachmentRepository;
     @Autowired
-    private NoticeSupplementRepository supplementRepository;
+    private LhNoticeSupplementRepository supplementRepository;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
     @Autowired
     private EntityManager entityManager;
 
@@ -56,14 +67,30 @@ class LhNoticeDetailIngestServiceTest {
 
     @BeforeEach
     void setUp() {
-        RecruitmentNotice root = recruitmentNoticeRepository.save(
-                new RecruitmentNotice(SourceSystem.MYHOME_PORTAL, "20942"));
-        lhNotice = noticeVersionRepository.save(NoticeVersion.firstVersion(
-                root, "20942", null, snapshot(
-                        "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do"
-                                + "?panId=2015122300020501&ccrCnntSysDsCd=03&uppAisTpCd=06&aisTpCd=10&mi=1026")));
-        service = new LhNoticeDetailIngestService(
-                null, MAPPER, noticeVersionRepository, supplementRepository);
+        // LhNoticeSupplement 저장이 REQUIRES_NEW 로 커밋되어 @DataJpaTest 기본 롤백을 우회한다.
+        // 그 자식 저장이 부모(NoticeVersion)를 FK로 봐야 하므로 공고도 같은 방식으로 미리 커밋해 두고,
+        // 테스트 사이에 남는 데이터를 매번 별도 트랜잭션으로 직접 비운다.
+        TransactionTemplate committed = new TransactionTemplate(transactionManager);
+        committed.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        committed.executeWithoutResult(status -> {
+            supplementRepository.deleteAll();
+            noticeVersionRepository.deleteAll();
+            recruitmentNoticeRepository.deleteAll();
+        });
+        committed.executeWithoutResult(status -> {
+            RecruitmentNotice root = recruitmentNoticeRepository.save(
+                    new RecruitmentNotice(SourceSystem.MYHOME_PORTAL, "20942"));
+            lhNotice = noticeVersionRepository.save(NoticeVersion.firstVersion(
+                    root, "20942", null, snapshot(
+                            "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do"
+                                    + "?panId=2015122300020501&ccrCnntSysDsCd=03&uppAisTpCd=06&aisTpCd=10&mi=1026")));
+        });
+        service = newService(null);
+    }
+
+    private LhNoticeDetailIngestService newService(OpenApiClient lhApiClient) {
+        return new LhNoticeDetailIngestService(lhApiClient, MAPPER, noticeVersionRepository, supplementRepository,
+                new LhSupplyInfoTypeResolver(), transactionManager, FIXED_CLOCK);
     }
 
     @Test
@@ -84,11 +111,22 @@ class LhNoticeDetailIngestServiceTest {
         entityManager.flush();
         entityManager.clear();
 
-        NoticeSupplement supplement = supplementRepository
+        LhNoticeSupplement supplement = supplementRepository
                 .findByNoticeVersionId(lhNotice.getId()).orElseThrow();
 
         assertThat(report.created()).isOne();
         assertThat(supplement.getCorrectionReason()).contains("접수기간 요일 오기재");
+
+        // 요청 메타데이터와 응답 시각, dataset 존재 여부가 그대로 보존된다.
+        assertThat(supplement.getSourcePanId()).isEqualTo("2015122300020501");
+        assertThat(supplement.getRequestedConnectionSystemDivisionCode()).isEqualTo("03");
+        assertThat(supplement.getRequestedUpperAnnouncementTypeCode()).isEqualTo("06");
+        assertThat(supplement.getRequestedAnnouncementTypeCode()).isEqualTo("10");
+        assertThat(supplement.getRequestedSupplyInfoTypeCode()).isEqualTo("063");
+        assertThat(supplement.getSourceRespondedAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 12, 31, 44));
+        assertThat(supplement.getFetchedAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 13, 0));
+        assertThat(supplement.isComplexDetailDatasetPresent()).isTrue();
+
         assertThat(supplement.getSchedules()).singleElement().satisfies(schedule -> {
             assertThat(schedule.getComplexLabel()).isEqualTo("부산정관 A4블록 행복주택");
             assertThat(schedule.getDocumentTargetAnnouncedOn()).isEqualTo(LocalDate.of(2026, 9, 7));
@@ -98,9 +136,10 @@ class LhNoticeDetailIngestServiceTest {
             assertThat(place.getPhone()).isEqualTo("1600-1004");
             assertThat(place.getDetailAddress()).isEqualTo("1층 105호");
         });
-        assertThat(supplement.getComplexSnapshots()).singleElement().satisfies(complex -> {
+        assertThat(supplement.getComplexDetails()).singleElement().satisfies(complex -> {
             assertThat(complex.getTotalUnitCount()).isEqualTo(384);
             assertThat(complex.getExpectedMoveInYearMonth()).isEqualTo(YearMonth.of(2027, 11));
+            assertThat(complex.getGuidanceText()).isEqualTo("공급 안내 원문");
         });
         assertThat(supplement.getAttachments()).extracting(NoticeAttachment::getKind)
                 .containsExactly("공고문(hwp)", "공고문(PDF)", "단지조감도");
@@ -128,19 +167,34 @@ class LhNoticeDetailIngestServiceTest {
     }
 
     @Test
-    @DisplayName("추가 데이터가 없는 정상 응답도 조회 완료 표시를 남긴다")
+    @DisplayName("추가 데이터가 없는 정상 응답도 조회 완료 표시를 남기고, dsSbd가 없으면 dataset 부재로 남는다")
     void storesEmptySupplement() {
         IngestReport report = service.apply(lhNotice, MAPPER.readTree("""
                 [{"resHeader":[{"RS_DTTM":"20260812123144","SS_CODE":"Y"}]}]
                 """));
 
-        NoticeSupplement supplement = supplementRepository
+        LhNoticeSupplement supplement = supplementRepository
                 .findByNoticeVersionId(lhNotice.getId()).orElseThrow();
         assertThat(report.created()).isOne();
         assertThat(supplement.getSchedules()).isEmpty();
         assertThat(supplement.getReceptionPlaces()).isEmpty();
-        assertThat(supplement.getComplexSnapshots()).isEmpty();
+        assertThat(supplement.getComplexDetails()).isEmpty();
         assertThat(supplement.getAttachments()).isEmpty();
+        assertThat(supplement.isComplexDetailDatasetPresent()).isFalse();
+    }
+
+    @Test
+    @DisplayName("dsSbd 키가 있지만 빈 배열이면 행 0개와 별개로 dataset은 존재했다고 남긴다")
+    void distinguishesEmptyDatasetFromMissingDataset() {
+        IngestReport report = service.apply(lhNotice, MAPPER.readTree("""
+                [{"dsSbd":[]},{"resHeader":[{"RS_DTTM":"20260812123144","SS_CODE":"Y"}]}]
+                """));
+
+        LhNoticeSupplement supplement = supplementRepository
+                .findByNoticeVersionId(lhNotice.getId()).orElseThrow();
+        assertThat(report.created()).isOne();
+        assertThat(supplement.getComplexDetails()).isEmpty();
+        assertThat(supplement.isComplexDetailDatasetPresent()).isTrue();
     }
 
     @Test
@@ -173,6 +227,24 @@ class LhNoticeDetailIngestServiceTest {
                 .satisfies(row -> assertThat(row.url()).isEqualTo("다운로드"));
     }
 
+    @Test
+    @DisplayName("통합공공임대는 공급정보코드를 아직 몰라 HTTP 호출 전에 제외한다")
+    void skipsHttpCallForIntegratedPublicRentalBeforeAnyRequest() {
+        RecruitmentNotice root = recruitmentNoticeRepository.save(
+                new RecruitmentNotice(SourceSystem.MYHOME_PORTAL, "20999"));
+        NoticeVersion integratedNotice = noticeVersionRepository.save(NoticeVersion.firstVersion(
+                root, "20999", null, integratedSnapshot()));
+
+        // lhApiClient 를 null 로 넘긴다 — HTTP 를 실제로 시도하면 NPE 로 드러난다.
+        LhNoticeDetailIngestService pureService = newService(null);
+
+        IngestReport report = pureService.applyOne(integratedNotice);
+
+        assertThat(report.rejectedByReason())
+                .containsEntry(IngestRejectionReason.UNSUPPORTED_LH_SUPPLEMENT_TYPE, 1);
+        assertThat(supplementRepository.existsByNoticeVersionId(integratedNotice.getId())).isFalse();
+    }
+
     private NoticeSnapshot snapshot(String detailUrl) {
         return new NoticeSnapshot(NoticeChangeStatus.CORRECTION, LocalDateTime.of(2026, 8, 5, 0, 0),
                 "부산 정관 행복주택 예비입주자 모집", detailUrl,
@@ -180,10 +252,19 @@ class LhNoticeDetailIngestServiceTest {
                 "LH", "아파트", "행복주택", "LH 콜센터 : 1600-1004");
     }
 
+    private NoticeSnapshot integratedSnapshot() {
+        return new NoticeSnapshot(NoticeChangeStatus.ORIGINAL, LocalDateTime.of(2026, 8, 5, 0, 0),
+                "통합공공임대 입주자 모집",
+                "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do"
+                        + "?panId=2015122300099999&ccrCnntSysDsCd=03&uppAisTpCd=06",
+                LocalDate.of(2026, 8, 18), LocalDate.of(2026, 8, 20), LocalDate.of(2026, 11, 20),
+                "LH", "아파트", "통합공공임대", "LH 콜센터 : 1600-1004");
+    }
+
     /** 실제 응답을 잘라 붙였다. 데이터셋이 배열로 여러 개 오고, 값 대신 라벨을 담은 짝(`...Nm`)이 같이 온다. */
     private static final String LH_DETAIL_RESPONSE = """
             [
-             {"dsSch":[{"PAN_ID":"2015122300020501","CCR_CNNT_SYS_DS_CD":"03","SPL_INF_TP_CD":"062"}]},
+             {"dsSch":[{"PAN_ID":"2015122300020501","CCR_CNNT_SYS_DS_CD":"03","SPL_INF_TP_CD":"063"}]},
              {"dsEtcInfo":[{"ETC_CTS":"○ 청약신청은 인터넷 PC 또는 모바일로 가능합니다.",
                             "CRC_RSN":"4. 공급일정 및 신청방법 등\\n■ 공급일정 표 - 접수기간 요일 오기재 일부수정"}]},
              {"dsEtcInfoNm":[{"ETC_CTS":"기타사항","CRC_RSN":"정정/취소사유"}]},
@@ -200,7 +281,7 @@ class LhNoticeDetailIngestServiceTest {
              {"dsSbd":[{
                "LCC_NT_NM":"부산정관 A4블록 행복주택","LGDN_ADR":"부산광역시 기장군 정관읍 용수리",
                "LGDN_DTL_ADR":"123","HSH_CNT":"384","HTN_FMLA_DESC":"지역난방",
-               "DDO_AR":"26.78~44.84","MVIN_XPC_YM":"2027.11"}]},
+               "DDO_AR":"26.78~44.84","MVIN_XPC_YM":"2027.11","SPL_INF_GUD_FCTS":"공급 안내 원문"}]},
              {"dsAhflInfo":[
                {"AHFL_URL":"https://apply.lh.or.kr/lhapply/lhFile.do?fileid=68041511",
                 "SL_PAN_AHFL_DS_CD_NM":"공고문(hwp)","CMN_AHFL_NM":"부산정관A4 행복주택 모집공고문.hwp"},

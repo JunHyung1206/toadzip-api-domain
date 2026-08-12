@@ -36,13 +36,14 @@ class LhNoticeDetailMappingTest {
                   "HTN_FMLA_DESC":"지역난방",
                   "LCC_NT_NM":"성남금토 A-4블록",
                   "DDO_AR":"55.83~55.99",
-                  "MVIN_XPC_YM":"2027.11"
+                  "MVIN_XPC_YM":"2027.11",
+                  "SPL_INF_GUD_FCTS":"공급 안내 원문"
                 }
                 """);
 
         LhNoticeDetail.Schedule schedule = mapper.convertValue(root, LhNoticeDetail.Schedule.class);
         LhNoticeDetail.Reception reception = mapper.convertValue(root, LhNoticeDetail.Reception.class);
-        LhNoticeDetail.ComplexSnapshot complex = mapper.convertValue(root, LhNoticeDetail.ComplexSnapshot.class);
+        LhNoticeDetail.ComplexDetail complex = mapper.convertValue(root, LhNoticeDetail.ComplexDetail.class);
 
         assertThat(schedule.contractEndDate()).isEqualTo("2027.01.21");
         assertThat(schedule.complexName()).isEqualTo("성남금토 A-4블록");
@@ -50,5 +51,6 @@ class LhNoticeDetailMappingTest {
         assertThat(reception.detailAddress()).isEqualTo("1층 105호");
         assertThat(complex.expectedMoveInYearMonth()).isEqualTo("2027.11");
         assertThat(complex.totalUnitCount()).isEqualTo("384");
+        assertThat(complex.guidanceText()).isEqualTo("공급 안내 원문");
     }
 }

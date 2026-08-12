@@ -58,14 +58,15 @@ public final class LhNoticeDetail {
 
     /** {@code dsSbd} — 해당 공고 시점의 단지 정보. */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record ComplexSnapshot(
+    public record ComplexDetail(
             @JsonProperty("LCC_NT_NM") String complexName,
             @JsonProperty("LGDN_ADR") String lotAddress,
             @JsonProperty("LGDN_DTL_ADR") String lotDetailAddress,
             @JsonProperty("HSH_CNT") String totalUnitCount,
             @JsonProperty("HTN_FMLA_DESC") String heatingDescription,
             @JsonProperty("DDO_AR") String exclusiveAreaRange,
-            @JsonProperty("MVIN_XPC_YM") String expectedMoveInYearMonth
+            @JsonProperty("MVIN_XPC_YM") String expectedMoveInYearMonth,
+            @JsonProperty("SPL_INF_GUD_FCTS") String guidanceText
     ) {
     }
 

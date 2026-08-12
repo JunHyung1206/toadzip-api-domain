@@ -20,7 +20,7 @@ import lombok.NoArgsConstructor;
         name = "reception_place",
         uniqueConstraints = @UniqueConstraint(
                 name = "uk_reception_place_order",
-                columnNames = {"notice_supplement_id", "display_order"})
+                columnNames = {"lh_notice_supplement_id", "display_order"})
 )
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -31,8 +31,8 @@ public class ReceptionPlace {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "notice_supplement_id", nullable = false)
-    private NoticeSupplement noticeSupplement;
+    @JoinColumn(name = "lh_notice_supplement_id", nullable = false)
+    private LhNoticeSupplement noticeSupplement;
 
     @Column(name = "display_order", nullable = false)
     private int displayOrder;
@@ -55,7 +55,7 @@ public class ReceptionPlace {
     @Column(length = 4000)
     private String guidance;
 
-    ReceptionPlace(NoticeSupplement noticeSupplement,
+    ReceptionPlace(LhNoticeSupplement noticeSupplement,
                    int displayOrder,
                    String address,
                    String detailAddress,

@@ -30,7 +30,7 @@ import lombok.NoArgsConstructor;
         name = "notice_attachment",
         uniqueConstraints = @UniqueConstraint(
                 name = "uk_notice_attachment_order",
-                columnNames = {"notice_supplement_id", "display_order"}
+                columnNames = {"lh_notice_supplement_id", "display_order"}
         )
 )
 @Getter
@@ -42,8 +42,8 @@ public class NoticeAttachment {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "notice_supplement_id", nullable = false)
-    private NoticeSupplement noticeSupplement;
+    @JoinColumn(name = "lh_notice_supplement_id", nullable = false)
+    private LhNoticeSupplement noticeSupplement;
 
     /** 원천 순서. 원천이 순번을 주지 않아 응답 순서를 쓴다({@link NoticeHousing} 과 같은 이유). */
     @Column(name = "display_order", nullable = false)
@@ -65,7 +65,7 @@ public class NoticeAttachment {
     @Column(name = "complex_label", length = 200)
     private String complexLabel;
 
-    NoticeAttachment(NoticeSupplement noticeSupplement,
+    NoticeAttachment(LhNoticeSupplement noticeSupplement,
                             int displayOrder,
                             String kind,
                             String name,

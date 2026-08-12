@@ -3,15 +3,15 @@ package test.domain.ingest.lh;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
-import org.springframework.web.util.UriComponentsBuilder;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import test.domain.ingest.IngestReport;
 import test.domain.ingest.IngestRejectionReason;
 import test.domain.ingest.OpenApiClient;
 import test.domain.ingest.SourceValues;
-import test.domain.notice.NoticeSupplement;
-import test.domain.notice.NoticeSupplementRepository;
+import test.domain.notice.LhNoticeSupplement;
+import test.domain.notice.LhNoticeSupplementRepository;
 import test.domain.notice.NoticeVersion;
 import test.domain.notice.NoticeVersionRepository;
 import test.domain.source.SourceSystem;
@@ -19,8 +19,15 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.net.URI;
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 
 /**
  * 15057999 → 이미 적재된 {@link NoticeVersion} 에 LH 상세를 덧입힌다.
@@ -30,7 +37,8 @@ import java.time.YearMonth;
  * 기준 원천을 바꾸는 게 아니라 마이홈이 비운 칸만 채운다.
  *
  * <p><b>어떻게 잇나.</b> 마이홈이 주는 공고 링크({@code notice_version.detail_url})가 LH 청약 사이트 주소라
- * 그 안에 LH 호출에 필요한 값이 통째로 박혀 있다. 별도 매칭이 필요 없다.
+ * 그 안에 LH 호출에 필요한 값이 통째로 박혀 있다. 별도 매칭이 필요 없다. 공급정보구분코드(SPL_INF_TP_CD)는
+ * 링크에 없어서 마이홈이 준 공급유형을 {@link LhSupplyInfoTypeResolver} 로 옮긴다.
  *
  * <pre>
  *   .../selectWrtancInfo.do?panId=2015122300020476&amp;ccrCnntSysDsCd=03&amp;uppAisTpCd=06&amp;aisTpCd=10
@@ -48,25 +56,31 @@ public class LhNoticeDetailIngestService {
     /** LH 링크가 이 파라미터를 갖고 있으면 LH 공고다. */
     private static final String LH_LINK_MARK = "panId";
 
-    /**
-     * 공급정보구분코드. 원천은 필수로 요구하는데 공고 링크에는 없다.
-     * 임대주택 코드 062 로 고정해도 실측 65건이 전부 응답했다(행복주택·영구임대·국민임대·신혼희망타운 포함).
-     */
-    private static final String SUPPLY_INFO_TYPE = "062";
+    private static final DateTimeFormatter RESPONSE_TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     private final OpenApiClient lhApiClient;
     private final ObjectMapper objectMapper;
     private final NoticeVersionRepository noticeVersionRepository;
-    private final NoticeSupplementRepository supplementRepository;
+    private final LhNoticeSupplementRepository supplementRepository;
+    private final LhSupplyInfoTypeResolver supplyInfoTypeResolver;
+    private final TransactionTemplate transactionTemplate;
+    private final Clock clock;
 
     public LhNoticeDetailIngestService(@Qualifier("lhApiClient") OpenApiClient lhApiClient,
                                        ObjectMapper objectMapper,
                                        NoticeVersionRepository noticeVersionRepository,
-                                       NoticeSupplementRepository supplementRepository) {
+                                       LhNoticeSupplementRepository supplementRepository,
+                                       LhSupplyInfoTypeResolver supplyInfoTypeResolver,
+                                       PlatformTransactionManager transactionManager,
+                                       Clock clock) {
         this.lhApiClient = lhApiClient;
         this.objectMapper = objectMapper;
         this.noticeVersionRepository = noticeVersionRepository;
         this.supplementRepository = supplementRepository;
+        this.supplyInfoTypeResolver = supplyInfoTypeResolver;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.clock = clock;
     }
 
     /** 공고를 먼저 적재해 둔 뒤에 돌린다. LH 공고가 아닌 버전은 건드리지 않는다. */
@@ -78,73 +92,134 @@ public class LhNoticeDetailIngestService {
         return report;
     }
 
-    private IngestReport applyOne(NoticeVersion version) {
+    /**
+     * HTTP 호출까지 포함한 진입점. 통합공공임대처럼 공급정보코드를 아직 모르는 공급유형은
+     * 호출 자체를 하지 않고 제외한다.
+     */
+    IngestReport applyOne(NoticeVersion version) {
         // 공고버전이 불변이라 보충 스냅샷도 불변이다. 이미 받았으면 다시 부르지 않는다.
         if (supplementRepository.existsByNoticeVersionId(version.getId())) {
             return IngestReport.oneUnchanged();
         }
 
-        MultiValueMap<String, String> params = paramsFrom(version);
-        if (params == null) {
+        Optional<String> supplyInfoTypeCode = supplyInfoTypeResolver.resolve(version.getSupplyType());
+        if (supplyInfoTypeCode.isEmpty()) {
+            log.info("LH 공급정보코드를 아직 모르는 공급유형이라 호출을 건너뜁니다: sourceNoticeId={}, supplyType={}",
+                    version.getSourceNoticeId(), version.getSupplyType());
+            return IngestReport.oneRejected(IngestRejectionReason.UNSUPPORTED_LH_SUPPLEMENT_TYPE);
+        }
+
+        Optional<LhNoticeRequest> request = requestFrom(version, supplyInfoTypeCode.orElseThrow());
+        if (request.isEmpty()) {
             log.warn("LH 링크에서 호출 파라미터를 못 뽑아 건너뜁니다: {}", version.getDetailUrl());
             return IngestReport.oneRejected(IngestRejectionReason.INVALID_SOURCE_ROW);
         }
 
+        JsonNode root;
         try {
-            return apply(version, lhApiClient.getRaw(PATH, params));
+            root = lhApiClient.getRaw(PATH, request.orElseThrow().toParams());
         } catch (RuntimeException e) {
-            log.warn("LH 공고 상세 적재에 실패했습니다: sourceNoticeId={}", version.getSourceNoticeId(), e);
+            log.warn("LH 공고 상세 조회에 실패했습니다: sourceNoticeId={}", version.getSourceNoticeId(), e);
+            return IngestReport.oneFailed();
+        }
+
+        return apply(version, request.orElseThrow(), root);
+    }
+
+    /**
+     * HTTP 없이 이미 받은 응답을 저장한다. 테스트처럼 호출과 저장을 분리해서 검증할 때 쓴다.
+     * 요청 메타데이터(panId, 코드들)는 {@code version} 에서 다시 뽑는다.
+     */
+    IngestReport apply(NoticeVersion version, JsonNode root) {
+        Optional<String> supplyInfoTypeCode = supplyInfoTypeResolver.resolve(version.getSupplyType());
+        if (supplyInfoTypeCode.isEmpty()) {
+            return IngestReport.oneRejected(IngestRejectionReason.UNSUPPORTED_LH_SUPPLEMENT_TYPE);
+        }
+        Optional<LhNoticeRequest> request = requestFrom(version, supplyInfoTypeCode.orElseThrow());
+        if (request.isEmpty()) {
+            return IngestReport.oneRejected(IngestRejectionReason.INVALID_SOURCE_ROW);
+        }
+        return apply(version, request.orElseThrow(), root);
+    }
+
+    /** HTTP 호출과 분리된 aggregate 저장 경계. 공고 하나의 저장만 REQUIRES_NEW 트랜잭션으로 묶는다. */
+    private IngestReport apply(NoticeVersion version, LhNoticeRequest request, JsonNode root) {
+        if (supplementRepository.existsByNoticeVersionId(version.getId())) {
+            return IngestReport.oneUnchanged();
+        }
+        try {
+            return Objects.requireNonNull(
+                    transactionTemplate.execute(status -> saveSupplement(version, request, root)));
+        } catch (RuntimeException e) {
+            log.warn("LH 보충 aggregate 저장 실패: sourceNoticeId={}", version.getSourceNoticeId(), e);
             return IngestReport.oneFailed();
         }
     }
 
-    /** HTTP 호출과 분리된 aggregate 저장 경계. 모든 자식을 구성한 뒤 한 번만 저장한다. */
-    IngestReport apply(NoticeVersion version, JsonNode root) {
-        if (supplementRepository.existsByNoticeVersionId(version.getId())) {
-            return IngestReport.oneUnchanged();
-        }
-
-        NoticeSupplement supplement = new NoticeSupplement(
-                version, SourceSystem.LH_CHEONGYAK_PLUS, correctionReason(root));
+    private IngestReport saveSupplement(NoticeVersion version, LhNoticeRequest request, JsonNode root) {
+        LhNoticeSupplement supplement = new LhNoticeSupplement(
+                version,
+                SourceSystem.LH_CHEONGYAK_PLUS,
+                request.panId(),
+                request.connectionSystemDivisionCode(),
+                request.upperAnnouncementTypeCode(),
+                request.announcementTypeCode(),
+                request.supplyInfoTypeCode(),
+                sourceRespondedAt(root),
+                LocalDateTime.now(clock),
+                datasetPresent(root, "dsSbd"),
+                correctionReason(root));
         addSchedules(supplement, root);
         addReceptionPlaces(supplement, root);
-        addComplexSnapshots(supplement, root);
+        addComplexDetails(supplement, root);
         addAttachments(supplement, root);
         supplementRepository.save(supplement);
         return IngestReport.oneCreated();
     }
 
     /**
-     * 마이홈이 준 LH 링크에서 호출 파라미터를 뽑는다.
-     * 넷 중 하나라도 없으면 부를 수 없으므로 null 을 돌려주고 건너뛴다.
+     * 마이홈이 준 LH 링크와 이미 정해진 공급정보코드로 호출 파라미터를 만든다.
+     * 링크 형식이 아니거나 필수 코드가 없으면 빈 값이다.
      */
-    private MultiValueMap<String, String> paramsFrom(NoticeVersion version) {
-        MultiValueMap<String, String> query = UriComponentsBuilder
-                .fromUriString(version.getDetailUrl())
-                .build()
-                .getQueryParams();
-
-        MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
-        if (!copy(query, "panId", params, "PAN_ID")
-                || !copy(query, "ccrCnntSysDsCd", params, "CCR_CNNT_SYS_DS_CD")
-                || !copy(query, "uppAisTpCd", params, "UPP_AIS_TP_CD")
-                || !copy(query, "aisTpCd", params, "AIS_TP_CD")) {
-            return null;
+    private Optional<LhNoticeRequest> requestFrom(NoticeVersion version, String supplyInfoTypeCode) {
+        try {
+            return LhNoticeRequest.from(URI.create(version.getDetailUrl()), supplyInfoTypeCode);
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
         }
-        params.add("SPL_INF_TP_CD", SUPPLY_INFO_TYPE);
-        params.add("PG_SZ", "100");
-        params.add("PAGE", "1");
-        return params;
     }
 
-    private boolean copy(MultiValueMap<String, String> from, String fromKey,
-                         MultiValueMap<String, String> to, String toKey) {
-        String value = SourceValues.trimToNull(from.getFirst(fromKey));
-        if (value == null) {
+    private LocalDateTime sourceRespondedAt(JsonNode root) {
+        List<JsonNode> header = OpenApiClient.findRows(root, "resHeader");
+        if (header.isEmpty()) {
+            return null;
+        }
+        String raw = SourceValues.trimToNull(header.get(0).path("RS_DTTM").asString(""));
+        if (raw == null) {
+            return null;
+        }
+        try {
+            return LocalDateTime.parse(raw, RESPONSE_TIMESTAMP);
+        } catch (DateTimeParseException e) {
+            log.warn("LH 응답시각 변환 실패: raw={}", raw);
+            return null;
+        }
+    }
+
+    /**
+     * 데이터셋 키가 응답 배열 안에 있는지를 행 개수와 별도로 검사한다. 키가 아예 없는 것과
+     * 키는 있는데 빈 배열인 것은 서로 다른 상태라 {@link OpenApiClient#findRows} 만으로는 구분할 수 없다.
+     */
+    private boolean datasetPresent(JsonNode root, String key) {
+        if (!root.isArray()) {
             return false;
         }
-        to.add(toKey, value);
-        return true;
+        for (JsonNode element : root) {
+            if (!element.path(key).isMissingNode()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String correctionReason(JsonNode root) {
@@ -158,7 +233,7 @@ public class LhNoticeDetailIngestService {
         return null;
     }
 
-    private void addSchedules(NoticeSupplement supplement, JsonNode root) {
+    private void addSchedules(LhNoticeSupplement supplement, JsonNode root) {
         int sourceOrder = 0;
         for (JsonNode row : OpenApiClient.findRows(root, "dsSplScdl")) {
             int rowOrder = sourceOrder++;
@@ -198,7 +273,7 @@ public class LhNoticeDetailIngestService {
         }
     }
 
-    private void addReceptionPlaces(NoticeSupplement supplement, JsonNode root) {
+    private void addReceptionPlaces(LhNoticeSupplement supplement, JsonNode root) {
         for (JsonNode row : OpenApiClient.findRows(root, "dsCtrtPlc")) {
             LhNoticeDetail.Reception reception = objectMapper.convertValue(row, LhNoticeDetail.Reception.class);
             String address = SourceValues.trimToNull(reception.address());
@@ -216,12 +291,12 @@ public class LhNoticeDetailIngestService {
         }
     }
 
-    private void addComplexSnapshots(NoticeSupplement supplement, JsonNode root) {
+    private void addComplexDetails(LhNoticeSupplement supplement, JsonNode root) {
         int sourceOrder = 0;
         for (JsonNode row : OpenApiClient.findRows(root, "dsSbd")) {
             int rowOrder = sourceOrder++;
-            LhNoticeDetail.ComplexSnapshot complex =
-                    objectMapper.convertValue(row, LhNoticeDetail.ComplexSnapshot.class);
+            LhNoticeDetail.ComplexDetail complex =
+                    objectMapper.convertValue(row, LhNoticeDetail.ComplexDetail.class);
             String complexName = SourceValues.trimToNull(complex.complexName());
             String lotAddress = SourceValues.trimToNull(complex.lotAddress());
             String lotDetailAddress = SourceValues.trimToNull(complex.lotDetailAddress());
@@ -230,20 +305,22 @@ public class LhNoticeDetailIngestService {
             String exclusiveAreaRange = SourceValues.trimToNull(complex.exclusiveAreaRange());
             YearMonth expectedMoveInYearMonth = yearMonth(
                     "dsSbd[%d].MVIN_XPC_YM".formatted(rowOrder), complex.expectedMoveInYearMonth());
+            String guidanceText = SourceValues.trimToNull(complex.guidanceText());
             if (complexName == null && lotAddress == null && lotDetailAddress == null
                     && totalUnitCount == null && heatingDescription == null && exclusiveAreaRange == null
-                    && expectedMoveInYearMonth == null) {
+                    && expectedMoveInYearMonth == null && guidanceText == null) {
                 continue;
             }
-            supplement.addComplexSnapshot(
-                    supplement.getComplexSnapshots().size(),
+            supplement.addComplexDetail(
+                    supplement.getComplexDetails().size(),
                     complexName,
                     lotAddress,
                     lotDetailAddress,
                     totalUnitCount,
                     heatingDescription,
                     exclusiveAreaRange,
-                    expectedMoveInYearMonth);
+                    expectedMoveInYearMonth,
+                    guidanceText);
         }
     }
 
@@ -272,7 +349,7 @@ public class LhNoticeDetailIngestService {
     }
 
     /** 공고문 파일과 단지 이미지를 응답 순서대로 한 줄로 잇는다. 둘 다 "공고에 딸린 파일"이라 같은 테이블이다. */
-    private void addAttachments(NoticeSupplement supplement, JsonNode root) {
+    private void addAttachments(LhNoticeSupplement supplement, JsonNode root) {
         for (JsonNode row : OpenApiClient.findRows(root, "dsAhflInfo")) {
             LhNoticeDetail.NoticeFile file = objectMapper.convertValue(row, LhNoticeDetail.NoticeFile.class);
             add(supplement, file.kind(), file.name(), file.url(), null);
@@ -287,7 +364,7 @@ public class LhNoticeDetailIngestService {
      * 원천이 값 대신 <b>컬럼 이름</b>을 담은 행을 같이 준다("첨부파일명", "다운로드" 같은 것).
      * URL 이 http 로 시작하는지로 그런 행을 걸러낸다.
      */
-    private void add(NoticeSupplement supplement,
+    private void add(LhNoticeSupplement supplement,
                      String kind, String name, String url, String complexLabel) {
         String trimmedUrl = SourceValues.trimToNull(url);
         String trimmedKind = SourceValues.trimToNull(kind);

@@ -7,5 +7,8 @@ public enum IngestRejectionReason {
     UNSUPPORTED_SUPPLY_TYPE,
     NOT_CONSTRUCTION_HOUSING,
     MISSING_IDENTITY,
-    INVALID_SOURCE_ROW
+    INVALID_SOURCE_ROW,
+
+    /** LH 상세(15057999)가 아직 공급정보코드를 확인하지 못한 공급유형(통합공공임대)이라 호출 자체를 건너뛴 경우. */
+    UNSUPPORTED_LH_SUPPLEMENT_TYPE
 }

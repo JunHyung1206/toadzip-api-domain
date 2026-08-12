@@ -19,22 +19,22 @@ import java.time.YearMonth;
 /** LH 공고가 그 시점에 안내한 단지 정보. 카탈로그 단지와 추정 연결하지 않는다. */
 @Entity
 @Table(
-        name = "notice_complex_snapshot",
+        name = "lh_complex_detail",
         uniqueConstraints = @UniqueConstraint(
                 name = "uk_notice_complex_snapshot_order",
-                columnNames = {"notice_supplement_id", "display_order"})
+                columnNames = {"lh_notice_supplement_id", "display_order"})
 )
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class NoticeComplexSnapshot {
+public class LhComplexDetail {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "notice_supplement_id", nullable = false)
-    private NoticeSupplement noticeSupplement;
+    @JoinColumn(name = "lh_notice_supplement_id", nullable = false)
+    private LhNoticeSupplement noticeSupplement;
 
     @Column(name = "display_order", nullable = false)
     private int displayOrder;
@@ -60,15 +60,19 @@ public class NoticeComplexSnapshot {
     @Column(name = "expected_move_in_year_month", length = 7)
     private YearMonth expectedMoveInYearMonth;
 
-    NoticeComplexSnapshot(NoticeSupplement noticeSupplement,
-                          int displayOrder,
-                          String complexLabel,
-                          String lotAddress,
-                          String lotDetailAddress,
-                          Integer totalUnitCount,
-                          String heatingDescription,
-                          String exclusiveAreaRangeText,
-                          YearMonth expectedMoveInYearMonth) {
+    @Column(name = "guidance_text", length = 4000)
+    private String guidanceText;
+
+    LhComplexDetail(LhNoticeSupplement noticeSupplement,
+                    int displayOrder,
+                    String complexLabel,
+                    String lotAddress,
+                    String lotDetailAddress,
+                    Integer totalUnitCount,
+                    String heatingDescription,
+                    String exclusiveAreaRangeText,
+                    YearMonth expectedMoveInYearMonth,
+                    String guidanceText) {
         this.noticeSupplement = noticeSupplement;
         this.displayOrder = displayOrder;
         this.complexLabel = complexLabel;
@@ -78,5 +82,14 @@ public class NoticeComplexSnapshot {
         this.heatingDescription = heatingDescription;
         this.exclusiveAreaRangeText = exclusiveAreaRangeText;
         this.expectedMoveInYearMonth = expectedMoveInYearMonth;
+        this.guidanceText = guidanceText;
+    }
+
+    /** 주소 매칭에 쓸 원문. 두 주소 칸을 버리지 않고 조립한다. */
+    public String fullLotAddress() {
+        if (lotAddress == null) {
+            return lotDetailAddress;
+        }
+        return lotDetailAddress == null ? lotAddress : lotAddress + " " + lotDetailAddress;
     }
 }
