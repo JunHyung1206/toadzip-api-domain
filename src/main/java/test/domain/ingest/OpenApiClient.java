@@ -7,6 +7,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.net.URI;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -15,8 +16,8 @@ import java.util.List;
  * data.go.kr 공통 호출부.
  *
  * <p>인증키를 쿼리 파라미터로 넘기지 않고 문자열로 직접 이어붙인다.
- * 포털이 주는 Encoding 키에는 이미 %2B, %2F, %3D 같은 이스케이프가 들어 있어서
- * 다시 인코딩하면 %252B 가 되어 인증에 실패한다. 나머지 파라미터(한글 공고명 등)는 인코딩해야 하므로 둘을 분리했다.
+ * 포털의 원문 키는 한 번 인코딩하고, 이미 %2B·%2F·%3D가 든 Encoding 키는 그대로 사용한다.
+ * 나머지 파라미터(한글 공고명 등)는 URI 빌더에서 별도로 인코딩한다.
  */
 public class OpenApiClient {
 
@@ -35,7 +36,7 @@ public class OpenApiClient {
     public OpenApiClient(ObjectMapper objectMapper, String baseUrl, String serviceKey, String name) {
         this.objectMapper = objectMapper;
         this.baseUrl = baseUrl;
-        this.serviceKey = serviceKey;
+        this.serviceKey = encodeServiceKey(serviceKey);
         this.name = name;
     }
 
@@ -71,7 +72,7 @@ public class OpenApiClient {
         }
     }
 
-    private URI buildUri(String path, MultiValueMap<String, String> params) {
+    URI buildUri(String path, MultiValueMap<String, String> params) {
         String query = UriComponentsBuilder.newInstance()
                 .queryParams(params)
                 .build()
@@ -79,6 +80,13 @@ public class OpenApiClient {
                 .getQuery();
         String uri = "%s/%s?serviceKey=%s".formatted(baseUrl, path, serviceKey);
         return URI.create(query == null || query.isBlank() ? uri : uri + "&" + query);
+    }
+
+    private static String encodeServiceKey(String raw) {
+        if (raw == null || raw.contains("%")) {
+            return raw;
+        }
+        return URLEncoder.encode(raw, StandardCharsets.UTF_8);
     }
 
     /**
