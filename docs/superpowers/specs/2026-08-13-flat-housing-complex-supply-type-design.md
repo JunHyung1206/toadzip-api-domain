@@ -6,7 +6,7 @@
 
 ## 목표
 
-마이홈 단지 카탈로그를 `단지 → 공급유형별 프로그램 → 주택형`의 3단계로 정규화하지 않는다. 원천이 내려주는 단위인 **단지 × 공급유형 × 주택형**을 그대로 반영해, 공급유형별 `HousingComplex` 행 아래에 `UnitType`을 둔다. 공급기관도 공통 엔티티로 정규화하지 않고 공고와 단지에 문자열 속성으로 직접 저장한다.
+마이홈 단지 카탈로그를 `물리 단지 → 공급유형별 프로그램 → 주택형`의 3단계로 정규화하지 않는다. 원천이 내려주는 단위인 **단지 × 공급유형 × 주택형**을 그대로 반영해, 공급유형별 `HousingComplex` 행 아래에 `UnitType`을 둔다. 공급유형이 다르면 단지명·주소·PNU·준공정보·기관명처럼 같은 값도 각 행에 중복 저장한다. 공유되는 물리 단지 부모나 공급기관 공통 엔티티는 만들지 않는다.
 
 ## 확정된 규칙
 
@@ -21,7 +21,7 @@ HousingComplex(경복궁자이, sourceComplexId=123, FIFTY_YEAR_RENTAL)
 HousingComplex(경복궁자이, sourceComplexId=123, HAPPY_HOUSE)
 ```
 
-두 행은 이름·주소·PNU를 공유할 수 있지만, 세대수·주택형·기준 임대조건은 공급유형별로 별도 관리한다.
+두 행은 이름·주소·PNU가 같더라도 서로 독립된 행이다. 값은 애플리케이션이나 별도 테이블에서 공유하지 않고 각 행에 중복 저장하며, 세대수·주택형·기준 임대조건도 공급유형별로 별도 관리한다.
 
 카탈로그 자연키는 다음과 같다.
 
@@ -54,7 +54,7 @@ HousingComplex ──< UnitType
 
 ### 4. 공급기관
 
-`HousingProviderAgency` 엔티티와 테이블을 제거한다.
+`HousingProviderAgency` 엔티티와 테이블을 제거한다. 기관명은 공급유형별 `HousingComplex` 행마다 중복 저장한다.
 
 - `HousingComplex.supplyInstitutionName`: 단지 원천의 `insttNm`
 - `NoticeVersion.supplyInstitutionName`: 공고 원천의 `suplyInsttNm`
@@ -116,6 +116,16 @@ PNU와 공급유형이 모두 일치하는 후보만 매칭 후보로 남긴다.
 
 이 프로젝트는 Flyway 없이 H2 `ddl-auto=update`를 사용한다. 기존 FK와 공급유형별 중복 단지를 자동 변환하는 것은 안전하지 않으므로, 개발 DB는 백업 파일로 보존한 뒤 새 스키마에서 원천을 다시 적재한다. 기존 데이터 파일을 삭제하지 않는다.
 
+구현 전에 다음 기존 문서를 원천·적재 기준으로 다시 대조한다.
+
+- `docs/원천-API-명세.md`
+- `docs/원천-API-데이터-사전.md`
+- `docs/원천-매핑.md`
+- `docs/테이블-설계-사전.md`
+- `docs/도메인-설계.md`
+
+이 문서들에 남아 있는 `ComplexRentalProgram`·`HousingProviderAgency` 관계와 적재 순서·매칭 규칙을 새 모델에 맞게 함께 갱신한다.
+
 권장 재적재 순서는 다음과 같다.
 
 1. 마이홈 단지정보 15110581
@@ -129,6 +139,7 @@ PNU와 공급유형이 모두 일치하는 후보만 매칭 후보로 남긴다.
 - 두 단지의 `UnitType`과 `unitCount`가 서로 섞이지 않는다.
 - `HousingComplex`와 `UnitType`이 직접 저장·조회된다.
 - 기관 엔티티 없이 단지와 공고의 기관명이 각각 문자열로 보존된다.
+- 공급유형이 다른 두 `HousingComplex` 행에 주소·PNU·기관명 등 공통 값이 각각 중복 저장된다.
 - 15059475의 `SUM_HSH_CNT`가 공급유형별 단지의 `unitCount`와 검증된다.
 - 15059475의 `HSH_CNT`가 정확히 매칭된 `UnitType.totalUnitCount`에만 반영된다.
 - 동일 PNU에 공급유형별 단지가 있으면 공고 공급유형으로 올바른 단지만 선택된다.
