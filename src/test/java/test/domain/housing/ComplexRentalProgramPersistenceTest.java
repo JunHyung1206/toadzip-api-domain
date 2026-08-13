@@ -47,6 +47,27 @@ class ComplexRentalProgramPersistenceTest {
                 .containsExactlyInAnyOrder(SupplyType.NATIONAL_RENTAL, SupplyType.LONG_TERM_JEONSE);
     }
 
+    @Test
+    void storesTheSourceTotalForOneUnitTypeSeparatelyFromTheProgramTotal() {
+        HousingProviderAgency agency = agencyRepository.save(new HousingProviderAgency("LH", "한국토지주택공사"));
+        HousingComplex complex = complexRepository.save(new HousingComplex(
+                "강릉교동 행복주택", address(), agency, SourceSystem.MYHOME_PORTAL, "30582291"));
+        ComplexRentalProgram program = programRepository.save(
+                new ComplexRentalProgram(complex, "행복주택", SupplyType.HAPPY_HOUSE, 180));
+        UnitType unitType = unitTypeRepository.save(
+                new UnitType(program, "36", area("36.9700"), area("20.1000")));
+
+        assertThat(unitType.updateTotalUnitCount(72)).isTrue();
+        assertThat(unitType.updateTotalUnitCount(72)).isFalse();
+
+        entityManager.flush();
+        entityManager.clear();
+
+        UnitType stored = unitTypeRepository.findById(unitType.getId()).orElseThrow();
+        assertThat(stored.getTotalUnitCount()).isEqualTo(72);
+        assertThat(stored.getComplexRentalProgram().getUnitCount()).isEqualTo(180);
+    }
+
     private Address address() {
         return new Address("서울특별시 노원구 덕릉로70가길 21", "1135010500113220000",
                 "11", "서울특별시", "350", "노원구");

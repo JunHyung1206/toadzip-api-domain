@@ -16,6 +16,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.util.Objects;
 
 /**
  * 한 단지 안에서 면적·구조·평면을 공유하는 카탈로그 항목. 원천 HWSPR04 의 한 행이 여기 한 줄이다.
@@ -62,6 +63,10 @@ public class UnitType {
     @Column(name = "residential_common_area", precision = 10, scale = 4)
     private BigDecimal residentialCommonArea;
 
+    /** LH 임대주택단지 조회(15059475)의 HSH_CNT. 이 전용면적 주택형의 전체 세대수다. */
+    @Column(name = "total_unit_count")
+    private Integer totalUnitCount;
+
     /** 설계에 없던 칸. 공고와 무관한 기본 임대조건. */
     @Embedded
     private BaseRentTerms baseRentTerms;
@@ -82,6 +87,15 @@ public class UnitType {
             return false;
         }
         this.baseRentTerms = incoming;
+        return true;
+    }
+
+    /** @return 실제로 값이 바뀌었으면 true. */
+    public boolean updateTotalUnitCount(Integer incoming) {
+        if (Objects.equals(totalUnitCount, incoming)) {
+            return false;
+        }
+        totalUnitCount = incoming;
         return true;
     }
 }

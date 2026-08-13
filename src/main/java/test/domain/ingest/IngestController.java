@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import test.domain.ingest.lh.LhNoticeDetailIngestService;
+import test.domain.ingest.lh.LhLeaseInfoIngestService;
 import test.domain.ingest.lh.LhUnitSupplyIngestService;
 import test.domain.ingest.myhome.MyHomeComplexIngestService;
 import test.domain.ingest.myhome.MyHomeNoticeIngestService;
@@ -26,6 +27,7 @@ public class IngestController {
     private final MyHomeNoticeIngestService noticeIngestService;
     private final LhNoticeDetailIngestService lhNoticeDetailIngestService;
     private final LhUnitSupplyIngestService lhUnitSupplyIngestService;
+    private final LhLeaseInfoIngestService lhLeaseInfoIngestService;
     private final NoticeHousingCatalogMatchService catalogMatchService;
     private final NoticeHousingLhMatchService lhMatchService;
     private final NoticeHousingUnitTypeMatchService unitTypeMatchService;
@@ -37,6 +39,7 @@ public class IngestController {
                             MyHomeNoticeIngestService noticeIngestService,
                             LhNoticeDetailIngestService lhNoticeDetailIngestService,
                             LhUnitSupplyIngestService lhUnitSupplyIngestService,
+                            LhLeaseInfoIngestService lhLeaseInfoIngestService,
                             NoticeHousingCatalogMatchService catalogMatchService,
                             NoticeHousingLhMatchService lhMatchService,
                             NoticeHousingUnitTypeMatchService unitTypeMatchService,
@@ -47,6 +50,7 @@ public class IngestController {
         this.noticeIngestService = noticeIngestService;
         this.lhNoticeDetailIngestService = lhNoticeDetailIngestService;
         this.lhUnitSupplyIngestService = lhUnitSupplyIngestService;
+        this.lhLeaseInfoIngestService = lhLeaseInfoIngestService;
         this.catalogMatchService = catalogMatchService;
         this.lhMatchService = lhMatchService;
         this.unitTypeMatchService = unitTypeMatchService;
@@ -85,6 +89,13 @@ public class IngestController {
     @PostMapping("/unit-supplies")
     public IngestReport ingestUnitSupplies() {
         return lhUnitSupplyIngestService.ingest();
+    }
+
+    /** 15059475를 전부 읽어 원천 스냅샷을 교체하고, 확정된 HSH_CNT만 카탈로그 주택형에 반영한다. */
+    @PostMapping("/lease-infos")
+    public IngestReport ingestLeaseInfos(@RequestParam(defaultValue = "9999") int pageSize,
+                                         @RequestParam(defaultValue = "1") int maxPages) {
+        return lhLeaseInfoIngestService.ingest(pageSize, maxPages);
     }
 
     /** {@link NoticeHousingCatalogMatchService} 로 공고 세대를 단지 카탈로그 PNU와 잇는다. */

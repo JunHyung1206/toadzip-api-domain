@@ -7,6 +7,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import test.domain.ingest.lh.LhNoticeDetailIngestService;
+import test.domain.ingest.lh.LhLeaseInfoIngestService;
 import test.domain.ingest.lh.LhUnitSupplyIngestService;
 import test.domain.ingest.myhome.MyHomeComplexIngestService;
 import test.domain.ingest.myhome.MyHomeNoticeIngestService;
@@ -34,6 +35,8 @@ class IngestControllerTest {
     private LhNoticeDetailIngestService lhNoticeDetailIngestService;
     @MockitoBean
     private LhUnitSupplyIngestService lhUnitSupplyIngestService;
+    @MockitoBean
+    private LhLeaseInfoIngestService lhLeaseInfoIngestService;
     @MockitoBean
     private NoticeHousingCatalogMatchService catalogMatchService;
     @MockitoBean
@@ -65,6 +68,11 @@ class IngestControllerTest {
                         .param("maxPages", "50"))
                 .andExpect(status().isOk());
         verify(noticeIngestService).ingest(100, 50);
+
+        when(lhLeaseInfoIngestService.ingest(9999, 1)).thenReturn(IngestReport.empty());
+        mockMvc.perform(post("/admin/ingest/lease-infos"))
+                .andExpect(status().isOk());
+        verify(lhLeaseInfoIngestService).ingest(9999, 1);
 
         mockMvc.perform(post("/admin/ingest/matches/catalog").param("noticeVersionId", "7"))
                 .andExpect(status().isOk());
