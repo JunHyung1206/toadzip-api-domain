@@ -1,5 +1,6 @@
 package test.domain.ingest;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
@@ -61,6 +62,19 @@ public final class SourceValues {
         }
         String digits = value.replaceAll("[^0-9]", "");
         return digits.isEmpty() ? null : Integer.valueOf(digits);
+    }
+
+    /** 원천이 면적·금액을 문자열로 준다("59.94"). 형식이 깨지면 null. */
+    public static BigDecimal toDecimal(String raw) {
+        String value = trimToNull(raw);
+        if (value == null) {
+            return null;
+        }
+        try {
+            return new BigDecimal(value);
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /**
