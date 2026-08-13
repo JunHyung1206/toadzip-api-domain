@@ -29,14 +29,14 @@ import java.util.Objects;
  * </pre>
  * 면적이 필요한 건 매입임대가 호마다 따로 사들인 집이라 같은 "39형" 안에 39.27㎡와 39.57㎡가 같이 있어서고,
  * 공급유형이 필요한 건 같은 평면이라도 국민임대냐 행복주택이냐에 따라 임대조건이 다른 행이 따로 오기 때문이다.
- * 공급유형은 이제 소속 {@link ComplexRentalProgram} 이 들고 있다.
+ * 공급유형은 소속 {@link HousingComplex} 가 들고 있다.
  */
 @Entity
 @Table(
         name = "unit_type",
         uniqueConstraints = @UniqueConstraint(
                 name = "uk_unit_type_natural",
-                columnNames = {"complex_rental_program_id", "type_name",
+                columnNames = {"housing_complex_id", "type_name",
                         "exclusive_area", "residential_common_area"}
         )
 )
@@ -49,8 +49,8 @@ public class UnitType {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "complex_rental_program_id", nullable = false)
-    private ComplexRentalProgram complexRentalProgram;
+    @JoinColumn(name = "housing_complex_id", nullable = false)
+    private HousingComplex housingComplex;
 
     /** 원천 styleNm. "36", "84", "51A" 처럼 전용면적을 반올림한 숫자에 알파벳이 붙기도 한다. */
     @Column(name = "type_name", nullable = false, length = 50)
@@ -71,11 +71,11 @@ public class UnitType {
     @Embedded
     private BaseRentTerms baseRentTerms;
 
-    public UnitType(ComplexRentalProgram complexRentalProgram,
+    public UnitType(HousingComplex housingComplex,
                     String typeName,
                     BigDecimal exclusiveArea,
                     BigDecimal residentialCommonArea) {
-        this.complexRentalProgram = complexRentalProgram;
+        this.housingComplex = housingComplex;
         this.typeName = typeName;
         this.exclusiveArea = exclusiveArea;
         this.residentialCommonArea = residentialCommonArea;

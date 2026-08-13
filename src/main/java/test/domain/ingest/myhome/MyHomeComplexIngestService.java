@@ -11,14 +11,10 @@ import org.springframework.util.MultiValueMap;
 import test.domain.housing.Address;
 import test.domain.housing.BaseRentTerms;
 import test.domain.housing.CatalogDetails;
-import test.domain.housing.ComplexRentalProgram;
-import test.domain.housing.ComplexRentalProgramRepository;
 import test.domain.housing.HeatingType;
 import test.domain.housing.HouseType;
 import test.domain.housing.HousingComplex;
 import test.domain.housing.HousingComplexRepository;
-import test.domain.housing.HousingProviderAgency;
-import test.domain.housing.HousingProviderAgencyRepository;
 import test.domain.housing.SupplyType;
 import test.domain.housing.UnitType;
 import test.domain.housing.UnitTypeRepository;
@@ -43,8 +39,9 @@ import java.util.stream.Collectors;
  * 15110581 → HousingComplex + UnitType 적재.
  *
  * <p>원천 한 행이 단지 하나가 아니라 "단지 × 공급유형 × 주택형" 이다.
- * 그래서 hsmpSn 으로 행을 모아 단지 하나를 aggregate 로 검증·저장한다. 보고서의 숫자도 단지 기준이라
- * 같은 단지의 행이 여러 개 들어와도 created/versioned/unchanged 는 단지당 한 번만 잡힌다.
+ * 그래서 (hsmpSn, 공급유형)으로 행을 모아 단지·공급유형 하나를 aggregate 로 검증·저장한다. 보고서의
+ * 숫자도 이 조합 기준이라 같은 공급유형의 주택형 행이 여러 개 들어와도 created/versioned/unchanged 는
+ * 조합당 한 번만 잡힌다. 같은 hsmpSn의 다른 공급유형은 별도 단지 행이다.
  */
 @Slf4j
 @Service
@@ -55,26 +52,20 @@ public class MyHomeComplexIngestService {
 
     private final OpenApiClient myhomeApiClient;
     private final HousingComplexRepository complexRepository;
-    private final ComplexRentalProgramRepository programRepository;
     private final UnitTypeRepository unitTypeRepository;
-    private final HousingProviderAgencyRepository agencyRepository;
     private final ConstructionRentalPolicy rentalPolicy;
     private final TransactionTemplate transactionTemplate;
     private final MyHomeRegionCatalog regionCatalog;
 
     public MyHomeComplexIngestService(@Qualifier("myhomeComplexApiClient") OpenApiClient myhomeApiClient,
                                       HousingComplexRepository complexRepository,
-                                      ComplexRentalProgramRepository programRepository,
                                       UnitTypeRepository unitTypeRepository,
-                                      HousingProviderAgencyRepository agencyRepository,
                                       ConstructionRentalPolicy rentalPolicy,
                                       PlatformTransactionManager transactionManager,
                                       MyHomeRegionCatalog regionCatalog) {
         this.myhomeApiClient = myhomeApiClient;
         this.complexRepository = complexRepository;
-        this.programRepository = programRepository;
         this.unitTypeRepository = unitTypeRepository;
-        this.agencyRepository = agencyRepository;
         this.rentalPolicy = rentalPolicy;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -133,13 +124,12 @@ public class MyHomeComplexIngestService {
     }
 
     /**
-     * hsmpSn 단위로 검증하고 커밋한다. 같은 단지 안의 행들이 서로 모순되면(주소가 갈리거나, 한 공급유형
-     * 안에서 세대수가 갈리면) 그 단지(또는 그 프로그램)만 통째로 제외한다. hsmpSn 하나가 다른 hsmpSn 의
-     * 저장 실패에 영향받지 않도록 각각 REQUIRES_NEW 트랜잭션으로 커밋한다.
+     * (hsmpSn, 공급유형) 단위로 검증하고 커밋한다. 같은 공급유형 안의 행들이 서로 모순되면 해당
+     * 단지 행만 통째로 제외한다. 공급유형이 다른 같은 hsmpSn은 서로 독립적으로 커밋한다.
      */
     public IngestReport apply(List<MyHomeComplexItem> sourceRows) {
         IngestReport report = IngestReport.empty();
-        Map<Long, List<MyHomeComplexItem>> accepted = new LinkedHashMap<>();
+        Map<ComplexSupplyKey, List<MyHomeComplexItem>> accepted = new LinkedHashMap<>();
         for (MyHomeComplexItem row : sourceRows) {
             Optional<IngestRejectionReason> rejection = rentalPolicy.rejectSupplyType(row.suplyTyNm());
             if (rejection.isPresent()) {
@@ -147,16 +137,21 @@ public class MyHomeComplexIngestService {
             } else if (row.hsmpSn() == null) {
                 report = report.plus(IngestReport.oneRejected(IngestRejectionReason.MISSING_IDENTITY));
             } else {
-                accepted.computeIfAbsent(row.hsmpSn(), key -> new ArrayList<>()).add(row);
+                SupplyType supplyType = SupplyType.from(row.suplyTyNm());
+                accepted.computeIfAbsent(
+                                new ComplexSupplyKey(String.valueOf(row.hsmpSn()), supplyType),
+                                key -> new ArrayList<>())
+                        .add(row);
             }
         }
-        for (Map.Entry<Long, List<MyHomeComplexItem>> entry : accepted.entrySet()) {
+        for (Map.Entry<ComplexSupplyKey, List<MyHomeComplexItem>> entry : accepted.entrySet()) {
             try {
                 IngestReport applied = transactionTemplate.execute(
                         status -> applyComplex(entry.getKey(), entry.getValue()));
                 report = report.plus(Objects.requireNonNull(applied));
             } catch (RuntimeException exception) {
-                log.warn("마이홈 단지 aggregate 저장 실패: hsmpSn={}", entry.getKey(), exception);
+                log.warn("마이홈 단지 aggregate 저장 실패: hsmpSn={}, supplyType={}",
+                        entry.getKey().sourceComplexId(), entry.getKey().supplyType(), exception);
                 report = report.plus(IngestReport.oneFailed());
             }
         }
@@ -164,19 +159,19 @@ public class MyHomeComplexIngestService {
     }
 
     /**
-     * 한 hsmpSn 을 검증하고 저장한다.
+     * 한 (hsmpSn, 공급유형) 조합을 검증하고 저장한다.
      * <ol>
      *   <li>파싱 가능한 준공일 또는 아파트 행이 하나도 없으면 단지 전체를 NOT_CONSTRUCTION_HOUSING 으로 제외한다.</li>
      *   <li>비어 있지 않은 rnAdres distinct 값이 1개가 아니면 단지 전체를 MISSING_IDENTITY 또는 INVALID_SOURCE_ROW 로 제외한다.</li>
-     *   <li>suplyTyNm 으로 프로그램을 묶고, 비어 있지 않은 hshldCo distinct 값이 둘 이상인 프로그램만 제외한다.</li>
-     *   <li>유효 프로그램이 없으면 엔티티를 만들지 않는다.</li>
+     *   <li>비어 있지 않은 hshldCo distinct 값이 둘 이상이면 이 공급유형 행을 제외한다.</li>
      * </ol>
      */
-    private IngestReport applyComplex(Long hsmpSn, List<MyHomeComplexItem> rows) {
+    private IngestReport applyComplex(ComplexSupplyKey key, List<MyHomeComplexItem> rows) {
         boolean anyConstructionEvidence = rows.stream().anyMatch(row ->
                 rentalPolicy.hasConstructionEvidence(row.houseTyNm(), row.competDe()));
         if (!anyConstructionEvidence) {
-            log.debug("단지 전체 제외: hsmpSn={}, reason={}", hsmpSn, IngestRejectionReason.NOT_CONSTRUCTION_HOUSING);
+            log.debug("단지 전체 제외: hsmpSn={}, supplyType={}, reason={}",
+                    key.sourceComplexId(), key.supplyType(), IngestRejectionReason.NOT_CONSTRUCTION_HOUSING);
             return IngestReport.oneRejected(IngestRejectionReason.NOT_CONSTRUCTION_HOUSING);
         }
 
@@ -186,51 +181,39 @@ public class MyHomeComplexIngestService {
                 .filter(Objects::nonNull)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         if (addresses.isEmpty()) {
-            log.warn("단지 전체 제외: hsmpSn={}, reason={}", hsmpSn, IngestRejectionReason.MISSING_IDENTITY);
+            log.warn("단지 전체 제외: hsmpSn={}, supplyType={}, reason={}",
+                    key.sourceComplexId(), key.supplyType(), IngestRejectionReason.MISSING_IDENTITY);
             return IngestReport.oneRejected(IngestRejectionReason.MISSING_IDENTITY);
         }
         if (addresses.size() > 1) {
-            log.warn("단지 전체 제외: hsmpSn={}, 도로명주소가 {}개로 갈립니다.", hsmpSn, addresses.size());
+            log.warn("단지 전체 제외: hsmpSn={}, supplyType={}, 도로명주소가 {}개로 갈립니다.",
+                    key.sourceComplexId(), key.supplyType(), addresses.size());
             return IngestReport.oneRejected(IngestRejectionReason.INVALID_SOURCE_ROW);
         }
         String roadAddress = addresses.iterator().next();
 
-        Map<String, List<MyHomeComplexItem>> bySupplyType = new LinkedHashMap<>();
-        for (MyHomeComplexItem row : rows) {
-            bySupplyType.computeIfAbsent(
-                    SourceValues.trimToNull(row.suplyTyNm()), key -> new ArrayList<>()).add(row);
+        Set<Integer> unitCounts = rows.stream()
+                .map(MyHomeComplexItem::hshldCo)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (unitCounts.size() > 1) {
+            log.warn("공급유형 단지 제외: hsmpSn={}, supplyType={}, 세대수가 {}개로 갈립니다.",
+                    key.sourceComplexId(), key.supplyType(), unitCounts.size());
+            return IngestReport.oneRejected(IngestRejectionReason.INVALID_SOURCE_ROW);
         }
-
-        IngestReport rejectedPrograms = IngestReport.empty();
-        Map<String, List<MyHomeComplexItem>> validPrograms = new LinkedHashMap<>();
-        for (Map.Entry<String, List<MyHomeComplexItem>> entry : bySupplyType.entrySet()) {
-            Set<Integer> unitCounts = entry.getValue().stream()
-                    .map(MyHomeComplexItem::hshldCo)
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
-            if (unitCounts.size() > 1) {
-                log.warn("프로그램 제외: hsmpSn={}, supplyType={}, 세대수가 {}개로 갈립니다.",
-                        hsmpSn, entry.getKey(), unitCounts.size());
-                rejectedPrograms = rejectedPrograms.plus(
-                        IngestReport.oneRejected(IngestRejectionReason.INVALID_SOURCE_ROW));
-                continue;
-            }
-            validPrograms.put(entry.getKey(), entry.getValue());
-        }
-        if (validPrograms.isEmpty()) {
-            return rejectedPrograms;
-        }
+        Integer unitCount = unitCounts.stream().findFirst().orElse(null);
 
         MyHomeComplexItem head = rows.stream()
                 .filter(row -> roadAddress.equals(SourceValues.trimToNull(row.rnAdres())))
                 .findFirst()
                 .orElseThrow();
-        String sourceComplexId = String.valueOf(hsmpSn);
+        String sourceComplexId = key.sourceComplexId();
         HousingComplex existing = complexRepository
-                .findBySourceSystemAndSourceComplexId(SourceSystem.MYHOME_PORTAL, sourceComplexId)
+                .findBySourceSystemAndSourceComplexIdAndSupplyType(
+                        SourceSystem.MYHOME_PORTAL, sourceComplexId, key.supplyType())
                 .orElse(null);
         boolean isNew = existing == null;
-        HousingComplex complex = isNew ? newComplex(head, sourceComplexId) : existing;
+        HousingComplex complex = isNew ? newComplex(head, sourceComplexId, key.supplyType(), unitCount) : existing;
 
         boolean complexChanged = complex.updateCatalogDetails(new CatalogDetails(
                 SourceValues.toDate(head.competDe()),
@@ -241,26 +224,31 @@ public class MyHomeComplexIngestService {
                 SourceValues.trimToNull(head.elvtrInstlAtNm()),
                 HouseType.from(head.houseTyNm()),
                 SourceValues.trimToNull(head.houseTyNm())));
+        complexChanged |= complex.updateSupplyDetails(
+                SourceValues.trimToNull(head.suplyTyNm()), unitCount, SourceValues.trimToNull(head.insttNm()));
 
         // 트랜잭션 경계가 save() 안에 있어서 더티체킹이 안 돈다. 그래서 바뀐 걸 직접 판단해 저장한다.
         if (isNew || complexChanged) {
             complexRepository.save(complex);
         }
 
-        boolean anyProgramOrUnitTypeChanged = false;
-        for (Map.Entry<String, List<MyHomeComplexItem>> entry : validPrograms.entrySet()) {
-            anyProgramOrUnitTypeChanged |= upsertProgram(complex, entry.getKey(), entry.getValue());
+        boolean anyUnitTypeChanged = false;
+        for (MyHomeComplexItem row : dedupeByNaturalKey(rows)) {
+            anyUnitTypeChanged |= upsertUnitType(complex, row);
         }
 
         IngestReport stored = isNew
                 ? IngestReport.oneCreated()
-                : (complexChanged || anyProgramOrUnitTypeChanged
+                : (complexChanged || anyUnitTypeChanged
                         ? IngestReport.oneVersioned()
                         : IngestReport.oneUnchanged());
-        return stored.plus(rejectedPrograms);
+        return stored;
     }
 
-    private HousingComplex newComplex(MyHomeComplexItem item, String sourceComplexId) {
+    private HousingComplex newComplex(MyHomeComplexItem item,
+                                      String sourceComplexId,
+                                      SupplyType supplyType,
+                                      Integer unitCount) {
         Address address = new Address(
                 item.rnAdres(),
                 item.pnu(),
@@ -271,9 +259,12 @@ public class MyHomeComplexIngestService {
         return new HousingComplex(
                 complexName(item),
                 address,
-                findOrCreateAgency(item.insttNm()),
                 SourceSystem.MYHOME_PORTAL,
-                sourceComplexId);
+                sourceComplexId,
+                supplyType,
+                SourceValues.trimToNull(item.suplyTyNm()),
+                unitCount,
+                SourceValues.trimToNull(item.insttNm()));
     }
 
     /**
@@ -299,33 +290,6 @@ public class MyHomeComplexIngestService {
         return district == null ? province : province + " " + district;
     }
 
-    /** @return 프로그램 또는 소속 주택형 중 하나라도 새로 만들었거나 값이 바뀌었으면 true */
-    private boolean upsertProgram(HousingComplex complex, String supplyTypeName, List<MyHomeComplexItem> rows) {
-        Integer unitCount = rows.stream()
-                .map(MyHomeComplexItem::hshldCo)
-                .filter(Objects::nonNull)
-                .findFirst()
-                .orElse(null);
-
-        ComplexRentalProgram existingProgram = programRepository
-                .findByHousingComplexAndSupplyTypeName(complex, supplyTypeName)
-                .orElse(null);
-        boolean programIsNew = existingProgram == null;
-        ComplexRentalProgram program = programIsNew
-                ? new ComplexRentalProgram(complex, supplyTypeName, SupplyType.from(supplyTypeName), unitCount)
-                : existingProgram;
-        boolean programChanged = !programIsNew && program.updateUnitCount(unitCount);
-        if (programIsNew || programChanged) {
-            programRepository.save(program);
-        }
-
-        boolean anyUnitTypeChanged = false;
-        for (MyHomeComplexItem row : dedupeByNaturalKey(rows)) {
-            anyUnitTypeChanged |= upsertUnitType(program, row);
-        }
-        return programIsNew || programChanged || anyUnitTypeChanged;
-    }
-
     /**
      * 전용·공용면적이 nullable 이라 DB unique 제약이 같은 자연키의 중복 행을 걸러 주지 못한다
      * (NULL 은 서로 달라 unique 로 안 묶인다). 저장 전에 미리 한 번 더 중복을 제거한다.
@@ -344,15 +308,15 @@ public class MyHomeComplexIngestService {
         return new ArrayList<>(byNaturalKey.values());
     }
 
-    private boolean upsertUnitType(ComplexRentalProgram program, MyHomeComplexItem row) {
+    private boolean upsertUnitType(HousingComplex complex, MyHomeComplexItem row) {
         String typeName = SourceValues.trimToNull(row.styleNm());
         UnitType existing = unitTypeRepository
-                .findByComplexRentalProgramAndTypeNameAndExclusiveAreaAndResidentialCommonArea(
-                        program, typeName, row.suplyPrvuseAr(), row.suplyCmnuseAr())
+                .findByHousingComplexAndTypeNameAndExclusiveAreaAndResidentialCommonArea(
+                        complex, typeName, row.suplyPrvuseAr(), row.suplyCmnuseAr())
                 .orElse(null);
         boolean isNew = existing == null;
         UnitType unitType = isNew
-                ? new UnitType(program, typeName, row.suplyPrvuseAr(), row.suplyCmnuseAr())
+                ? new UnitType(complex, typeName, row.suplyPrvuseAr(), row.suplyCmnuseAr())
                 : existing;
 
         boolean changed = unitType.updateBaseRentTerms(
@@ -364,17 +328,6 @@ public class MyHomeComplexIngestService {
         return isNew || changed;
     }
 
-    /**
-     * 원천은 기관 코드를 주지 않고 이름만 준다. 실데이터에 나온 값은
-     * LH서울·LH경기남부·LH경기북부·LH대전충남·LH세종·LH인천·SH공사·대전도시공사·세종특별자치시·인천도시공사 로,
-     * LH가 지역본부 단위로 쪼개져 있다. 코드체계가 확인되면 여기만 바꾸면 된다.
-     */
-    private HousingProviderAgency findOrCreateAgency(String name) {
-        String agencyName = SourceValues.trimToNull(name);
-        if (agencyName == null) {
-            throw new IllegalStateException("공급기관명(insttNm)이 없습니다.");
-        }
-        return agencyRepository.findByCode(agencyName)
-                .orElseGet(() -> agencyRepository.save(new HousingProviderAgency(agencyName, agencyName)));
+    private record ComplexSupplyKey(String sourceComplexId, SupplyType supplyType) {
     }
 }

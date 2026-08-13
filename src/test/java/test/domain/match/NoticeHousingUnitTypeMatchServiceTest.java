@@ -6,12 +6,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import test.domain.housing.Address;
-import test.domain.housing.ComplexRentalProgram;
-import test.domain.housing.ComplexRentalProgramRepository;
 import test.domain.housing.HousingComplex;
 import test.domain.housing.HousingComplexRepository;
-import test.domain.housing.HousingProviderAgency;
-import test.domain.housing.HousingProviderAgencyRepository;
 import test.domain.housing.SupplyType;
 import test.domain.housing.UnitType;
 import test.domain.housing.UnitTypeRepository;
@@ -58,9 +54,7 @@ class NoticeHousingUnitTypeMatchServiceTest {
     private static final String CATALOG_VERSION = "catalog-pnu-v1";
     private static final String MATCHER_VERSION = "unit-type-area-v1";
 
-    @Autowired private HousingProviderAgencyRepository agencyRepository;
     @Autowired private HousingComplexRepository complexRepository;
-    @Autowired private ComplexRentalProgramRepository programRepository;
     @Autowired private UnitTypeRepository unitTypeRepository;
     @Autowired private RecruitmentNoticeRepository recruitmentNoticeRepository;
     @Autowired private NoticeVersionRepository noticeVersionRepository;
@@ -76,19 +70,17 @@ class NoticeHousingUnitTypeMatchServiceTest {
 
     @BeforeEach
     void setUp() {
-        HousingProviderAgency agency = agencyRepository.save(new HousingProviderAgency("LH", "한국토지주택공사"));
-
         // 카탈로그 단지명은 마이홈식("구영주공1단지"), LH는 사업지구명식("울산구영1BL 국민임대")이다.
         HousingComplex complex = complexRepository.save(new HousingComplex(
-                "구영주공1단지", address("3171010200100010001"), agency, SourceSystem.MYHOME_PORTAL, "10001"));
-        ComplexRentalProgram program = programRepository.save(
-                new ComplexRentalProgram(complex, "국민임대", SupplyType.NATIONAL_RENTAL, 235));
-        unitTypeRepository.save(new UnitType(program, "59", new BigDecimal("59.9400"), new BigDecimal("82.1224")));
-        unitTypeRepository.save(new UnitType(program, "33A", new BigDecimal("33.7500"), new BigDecimal("46.0447")));
-        unitTypeRepository.save(new UnitType(program, "33B", new BigDecimal("33.7700"), new BigDecimal("46.1000")));
+                "구영주공1단지", address("3171010200100010001"), SourceSystem.MYHOME_PORTAL, "10001",
+                SupplyType.NATIONAL_RENTAL, "국민임대", 235, "LH"));
+        unitTypeRepository.save(new UnitType(complex, "59", new BigDecimal("59.9400"), new BigDecimal("82.1224")));
+        unitTypeRepository.save(new UnitType(complex, "33A", new BigDecimal("33.7500"), new BigDecimal("46.0447")));
+        unitTypeRepository.save(new UnitType(complex, "33B", new BigDecimal("33.7700"), new BigDecimal("46.1000")));
 
         HousingComplex unconfirmed = complexRepository.save(new HousingComplex(
-                "미확정단지", address("3171010200100010002"), agency, SourceSystem.MYHOME_PORTAL, "10002"));
+                "미확정단지", address("3171010200100010002"), SourceSystem.MYHOME_PORTAL, "10002",
+                SupplyType.NATIONAL_RENTAL, "국민임대", 100, "LH"));
 
         RecruitmentNotice root = recruitmentNoticeRepository.save(
                 new RecruitmentNotice(SourceSystem.MYHOME_PORTAL, "40001"));
@@ -140,7 +132,7 @@ class NoticeHousingUnitTypeMatchServiceTest {
         batchRepository.save(batch);
 
         service = new NoticeHousingUnitTypeMatchService(repository, noticeVersionRepository, batchRepository,
-                supplementRepository, lhMatchRepository, catalogMatchRepository, programRepository,
+                supplementRepository, lhMatchRepository, catalogMatchRepository,
                 unitTypeRepository, FIXED_CLOCK);
     }
 

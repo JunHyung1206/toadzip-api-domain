@@ -7,8 +7,7 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import test.domain.housing.Address;
 import test.domain.housing.HousingComplex;
 import test.domain.housing.HousingComplexRepository;
-import test.domain.housing.HousingProviderAgency;
-import test.domain.housing.HousingProviderAgencyRepository;
+import test.domain.housing.SupplyType;
 import test.domain.notice.NoticeChangeStatus;
 import test.domain.notice.NoticeHousing;
 import test.domain.notice.NoticeHousingRepository;
@@ -50,8 +49,6 @@ class NoticeHousingCatalogMatchServiceTest {
     @Autowired
     private NoticeHousingRepository housingRepository;
     @Autowired
-    private HousingProviderAgencyRepository agencyRepository;
-    @Autowired
     private HousingComplexRepository complexRepository;
     @Autowired
     private NoticeHousingCatalogMatchRepository repository;
@@ -63,13 +60,18 @@ class NoticeHousingCatalogMatchServiceTest {
 
     @BeforeEach
     void setUp() {
-        HousingProviderAgency agency = agencyRepository.save(new HousingProviderAgency("LH", "한국토지주택공사"));
         complexRepository.save(new HousingComplex(
-                "매칭단지", address(PNU_MATCHED), agency, SourceSystem.MYHOME_PORTAL, "10001"));
+                "매칭단지", address(PNU_MATCHED), SourceSystem.MYHOME_PORTAL, "10001",
+                SupplyType.HAPPY_HOUSE, "행복주택", 100, "LH"));
         complexRepository.save(new HousingComplex(
-                "중복단지1", address(PNU_AMBIGUOUS), agency, SourceSystem.MYHOME_PORTAL, "10002"));
+                "매칭단지", address(PNU_MATCHED), SourceSystem.MYHOME_PORTAL, "10004",
+                SupplyType.FIFTY_YEAR_RENTAL, "50년임대", 100, "LH"));
         complexRepository.save(new HousingComplex(
-                "중복단지2", address(PNU_AMBIGUOUS), agency, SourceSystem.MYHOME_PORTAL, "10003"));
+                "중복단지1", address(PNU_AMBIGUOUS), SourceSystem.MYHOME_PORTAL, "10002",
+                SupplyType.HAPPY_HOUSE, "행복주택", 100, "LH"));
+        complexRepository.save(new HousingComplex(
+                "중복단지2", address(PNU_AMBIGUOUS), SourceSystem.MYHOME_PORTAL, "10003",
+                SupplyType.HAPPY_HOUSE, "행복주택", 100, "LH"));
 
         RecruitmentNotice root = recruitmentNoticeRepository.save(
                 new RecruitmentNotice(SourceSystem.MYHOME_PORTAL, "40001"));
@@ -82,7 +84,8 @@ class NoticeHousingCatalogMatchServiceTest {
         housingRepository.save(new NoticeHousing(version, 2, 3, 100,
                 suppliedHousing(PNU_AMBIGUOUS), rentTerms(), null, null));
 
-        service = new NoticeHousingCatalogMatchService(repository, housingRepository, complexRepository, FIXED_CLOCK);
+        service = new NoticeHousingCatalogMatchService(
+                repository, housingRepository, noticeVersionRepository, complexRepository, FIXED_CLOCK);
     }
 
     @Test

@@ -218,7 +218,7 @@ class MyHomeNoticeIngestServiceTest {
         assertThat(correction.getSupplyInstitutionName()).isEqualTo("LH");
         assertThat(correction.getSupplyTypeName()).isEqualTo("행복주택");
         assertThat(correction.getHouseTypeName()).isEqualTo("아파트");
-        // 공고 쪽 enum 은 단지 쪽 unit_type.supply_type 과 같은 타입이라 그대로 비교된다.
+        // 공고 쪽 enum 은 단지 쪽 housing_complex.supply_type 과 같은 타입이라 그대로 비교된다.
         assertThat(correction.getSupplyType()).isEqualTo(SupplyType.HAPPY_HOUSE);
         assertThat(correction.getHouseType()).isEqualTo(HouseType.APARTMENT);
         assertThat(correction.getContact()).startsWith("LH 콜센터");

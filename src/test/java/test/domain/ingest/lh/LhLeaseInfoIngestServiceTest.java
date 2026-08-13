@@ -10,12 +10,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import test.domain.housing.Address;
-import test.domain.housing.ComplexRentalProgram;
-import test.domain.housing.ComplexRentalProgramRepository;
 import test.domain.housing.HousingComplex;
 import test.domain.housing.HousingComplexRepository;
-import test.domain.housing.HousingProviderAgency;
-import test.domain.housing.HousingProviderAgencyRepository;
 import test.domain.housing.LhLeaseInfoBatch;
 import test.domain.housing.LhLeaseInfoBatchRepository;
 import test.domain.housing.SupplyType;
@@ -45,9 +41,7 @@ class LhLeaseInfoIngestServiceTest {
     private static final Clock FIXED_CLOCK =
             Clock.fixed(Instant.parse("2026-08-13T04:00:00Z"), ZoneId.of("Asia/Seoul"));
 
-    @Autowired private HousingProviderAgencyRepository agencyRepository;
     @Autowired private HousingComplexRepository complexRepository;
-    @Autowired private ComplexRentalProgramRepository programRepository;
     @Autowired private UnitTypeRepository unitTypeRepository;
     @Autowired private LhLeaseInfoBatchRepository batchRepository;
     @Autowired private LhLeaseInfoUnitTypeMatchRepository matchRepository;
@@ -69,34 +63,27 @@ class LhLeaseInfoIngestServiceTest {
             matchRepository.deleteAll();
             batchRepository.deleteAll();
             unitTypeRepository.deleteAll();
-            programRepository.deleteAll();
             complexRepository.deleteAll();
-            agencyRepository.deleteAll();
         });
 
         committed.executeWithoutResult(status -> {
-            HousingProviderAgency agency = agencyRepository.save(new HousingProviderAgency("LH", "한국토지주택공사"));
             HousingComplex complex = complexRepository.save(new HousingComplex(
-                    "강릉교동 행복주택", address("강원특별자치도", "강릉시"), agency,
-                    SourceSystem.MYHOME_PORTAL, "10001"));
-            ComplexRentalProgram program = programRepository.save(
-                    new ComplexRentalProgram(complex, "행복주택", SupplyType.HAPPY_HOUSE, 180));
-            matched36 = unitTypeRepository.save(new UnitType(program, "36", area("36.9700"), area("20.1000")));
-            matched26 = unitTypeRepository.save(new UnitType(program, "26", area("26.9500"), area("15.0000")));
-            ambiguousA = unitTypeRepository.save(new UnitType(program, "21A", area("21.8400"), area("12.0000")));
-            ambiguousB = unitTypeRepository.save(new UnitType(program, "21B", area("21.8600"), area("12.1000")));
+                    "강릉교동 행복주택", address("강원특별자치도", "강릉시"),
+                    SourceSystem.MYHOME_PORTAL, "10001", SupplyType.HAPPY_HOUSE, "행복주택", 180, "LH"));
+            matched36 = unitTypeRepository.save(new UnitType(complex, "36", area("36.9700"), area("20.1000")));
+            matched26 = unitTypeRepository.save(new UnitType(complex, "26", area("26.9500"), area("15.0000")));
+            ambiguousA = unitTypeRepository.save(new UnitType(complex, "21A", area("21.8400"), area("12.0000")));
+            ambiguousB = unitTypeRepository.save(new UnitType(complex, "21B", area("21.8600"), area("12.1000")));
 
             HousingComplex nearAreaComplex = complexRepository.save(new HousingComplex(
-                    "강릉교동 근접 행복주택", address("강원특별자치도", "강릉시"), agency,
-                    SourceSystem.MYHOME_PORTAL, "10002"));
-            ComplexRentalProgram nearAreaProgram = programRepository.save(
-                    new ComplexRentalProgram(nearAreaComplex, "행복주택", SupplyType.HAPPY_HOUSE, 70));
+                    "강릉교동 근접 행복주택", address("강원특별자치도", "강릉시"),
+                    SourceSystem.MYHOME_PORTAL, "10002", SupplyType.HAPPY_HOUSE, "행복주택", 70, "LH"));
             nearArea = unitTypeRepository.save(
-                    new UnitType(nearAreaProgram, "36", area("36.9200"), area("20.1000")));
+                    new UnitType(nearAreaComplex, "36", area("36.9200"), area("20.1000")));
         });
 
         service = new LhLeaseInfoIngestService(null, MAPPER, batchRepository, matchRepository,
-                programRepository, unitTypeRepository, transactionManager, FIXED_CLOCK);
+                complexRepository, unitTypeRepository, transactionManager, FIXED_CLOCK);
     }
 
     @Test

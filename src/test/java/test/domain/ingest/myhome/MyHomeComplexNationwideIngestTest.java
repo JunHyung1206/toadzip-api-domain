@@ -9,13 +9,15 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.MultiValueMap;
-import test.domain.housing.ComplexRentalProgramRepository;
 import test.domain.housing.HousingComplexRepository;
-import test.domain.housing.HousingProviderAgencyRepository;
+import test.domain.housing.SupplyType;
 import test.domain.housing.UnitTypeRepository;
 import test.domain.ingest.ConstructionRentalPolicy;
 import test.domain.ingest.IngestReport;
 import test.domain.ingest.OpenApiClient;
+import test.domain.match.LhLeaseInfoUnitTypeMatchRepository;
+import test.domain.match.NoticeHousingCatalogMatchRepository;
+import test.domain.match.NoticeHousingUnitTypeMatchRepository;
 import test.domain.source.SourceSystem;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -39,11 +41,13 @@ class MyHomeComplexNationwideIngestTest {
     @Autowired
     private HousingComplexRepository complexRepository;
     @Autowired
-    private ComplexRentalProgramRepository programRepository;
-    @Autowired
     private UnitTypeRepository unitTypeRepository;
     @Autowired
-    private HousingProviderAgencyRepository agencyRepository;
+    private LhLeaseInfoUnitTypeMatchRepository lhLeaseInfoMatchRepository;
+    @Autowired
+    private NoticeHousingCatalogMatchRepository catalogMatchRepository;
+    @Autowired
+    private NoticeHousingUnitTypeMatchRepository unitTypeMatchRepository;
     @Autowired
     private PlatformTransactionManager transactionManager;
 
@@ -56,14 +60,15 @@ class MyHomeComplexNationwideIngestTest {
         TransactionTemplate cleanup = new TransactionTemplate(transactionManager);
         cleanup.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         cleanup.executeWithoutResult(status -> {
+            unitTypeMatchRepository.deleteAll();
+            lhLeaseInfoMatchRepository.deleteAll();
+            catalogMatchRepository.deleteAll();
             unitTypeRepository.deleteAll();
-            programRepository.deleteAll();
             complexRepository.deleteAll();
-            agencyRepository.deleteAll();
         });
         fakeClient = new FakeMyHomeApiClient();
         service = new MyHomeComplexIngestService(
-                fakeClient, complexRepository, programRepository, unitTypeRepository, agencyRepository,
+                fakeClient, complexRepository, unitTypeRepository,
                 new ConstructionRentalPolicy(), transactionManager, regionCatalog);
     }
 
@@ -99,8 +104,8 @@ class MyHomeComplexNationwideIngestTest {
         IngestReport report = service.ingestNationwide(500, 50);
 
         assertThat(report.failed()).isOne();
-        assertThat(complexRepository.findBySourceSystemAndSourceComplexId(
-                SourceSystem.MYHOME_PORTAL, "90310001")).isPresent();
+        assertThat(complexRepository.findBySourceSystemAndSourceComplexIdAndSupplyType(
+                SourceSystem.MYHOME_PORTAL, "90310001", SupplyType.HAPPY_HOUSE)).isPresent();
         // 실패한 지역(11350)은 아무것도 남기지 않아 전국에서 단지가 하나만 저장돼야 한다.
         assertThat(complexRepository.count()).isOne();
     }
@@ -114,9 +119,8 @@ class MyHomeComplexNationwideIngestTest {
 
         IngestReport report = service.ingestRegion(region("11", "350"), 1, 10);
 
-        assertThat(report.created()).isOne();
-        assertThat(complexRepository.count()).isOne();
-        assertThat(programRepository.count()).isEqualTo(2);
+        assertThat(report.created()).isEqualTo(2);
+        assertThat(complexRepository.count()).isEqualTo(2);
         assertThat(unitTypeRepository.count()).isEqualTo(2);
     }
 

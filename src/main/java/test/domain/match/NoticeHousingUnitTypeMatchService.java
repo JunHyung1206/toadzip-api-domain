@@ -2,7 +2,6 @@ package test.domain.match;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import test.domain.housing.ComplexRentalProgramRepository;
 import test.domain.housing.HousingComplex;
 import test.domain.housing.UnitType;
 import test.domain.housing.UnitTypeRepository;
@@ -51,7 +50,6 @@ public class NoticeHousingUnitTypeMatchService {
     private final LhNoticeSupplementRepository supplementRepository;
     private final NoticeHousingLhMatchRepository lhMatchRepository;
     private final NoticeHousingCatalogMatchRepository catalogMatchRepository;
-    private final ComplexRentalProgramRepository programRepository;
     private final UnitTypeRepository unitTypeRepository;
     private final Clock clock;
 
@@ -61,7 +59,6 @@ public class NoticeHousingUnitTypeMatchService {
                                              LhNoticeSupplementRepository supplementRepository,
                                              NoticeHousingLhMatchRepository lhMatchRepository,
                                              NoticeHousingCatalogMatchRepository catalogMatchRepository,
-                                             ComplexRentalProgramRepository programRepository,
                                              UnitTypeRepository unitTypeRepository,
                                              Clock clock) {
         this.repository = repository;
@@ -70,7 +67,6 @@ public class NoticeHousingUnitTypeMatchService {
         this.supplementRepository = supplementRepository;
         this.lhMatchRepository = lhMatchRepository;
         this.catalogMatchRepository = catalogMatchRepository;
-        this.programRepository = programRepository;
         this.unitTypeRepository = unitTypeRepository;
         this.clock = clock;
     }
@@ -170,12 +166,9 @@ public class NoticeHousingUnitTypeMatchService {
                     0, matcherVersion, now, "이 공급행이 PNU로 확정된 카탈로그 단지가 없음", order);
         }
 
-        // ④ 전용면적 — 이 공고의 공급유형 프로그램 안에서 대조한다.
+        // ④ 전용면적 — 공급유형별 HousingComplex에 직접 속한 주택형에서 대조한다.
         BigDecimal area = supply.getExclusiveArea();
-        List<UnitType> candidates = area == null ? List.of() : programRepository
-                .findByHousingComplexAndSupplyType(complex, noticeVersion.getSupplyType())
-                .map(unitTypeRepository::findByComplexRentalProgram)
-                .orElse(List.of())
+        List<UnitType> candidates = area == null ? List.of() : unitTypeRepository.findByHousingComplex(complex)
                 .stream()
                 .filter(unitType -> unitType.getExclusiveArea() != null
                         && unitType.getExclusiveArea().subtract(area).abs().compareTo(AREA_TOLERANCE) <= 0)

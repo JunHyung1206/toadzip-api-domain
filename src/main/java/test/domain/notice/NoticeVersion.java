@@ -123,7 +123,7 @@ public class NoticeVersion {
     @Column(name = "house_type_name", length = 30)
     private String houseTypeName;
 
-    /** 설계에 없던 칸. 원천 suplyTyNm 을 정리한 값. 단지 쪽 {@code unit_type.supply_type} 과 같은 enum 이다. */
+    /** 설계에 없던 칸. 원천 suplyTyNm 을 정리한 값. 단지 쪽 {@code housing_complex.supply_type} 과 같은 enum 이다. */
     @Enumerated(EnumType.STRING)
     @Column(name = "supply_type", length = 30)
     private SupplyType supplyType;

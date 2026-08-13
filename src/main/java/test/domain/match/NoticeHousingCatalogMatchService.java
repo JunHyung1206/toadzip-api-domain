@@ -6,6 +6,8 @@ import test.domain.housing.HousingComplex;
 import test.domain.housing.HousingComplexRepository;
 import test.domain.notice.NoticeHousing;
 import test.domain.notice.NoticeHousingRepository;
+import test.domain.notice.NoticeVersion;
+import test.domain.notice.NoticeVersionRepository;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -20,15 +22,18 @@ public class NoticeHousingCatalogMatchService {
 
     private final NoticeHousingCatalogMatchRepository repository;
     private final NoticeHousingRepository housingRepository;
+    private final NoticeVersionRepository noticeVersionRepository;
     private final HousingComplexRepository complexRepository;
     private final Clock clock;
 
     public NoticeHousingCatalogMatchService(NoticeHousingCatalogMatchRepository repository,
                                             NoticeHousingRepository housingRepository,
+                                            NoticeVersionRepository noticeVersionRepository,
                                             HousingComplexRepository complexRepository,
                                             Clock clock) {
         this.repository = repository;
         this.housingRepository = housingRepository;
+        this.noticeVersionRepository = noticeVersionRepository;
         this.complexRepository = complexRepository;
         this.clock = clock;
     }
@@ -40,11 +45,13 @@ public class NoticeHousingCatalogMatchService {
         // 삭제된 행의 물리 DELETE는 flush 전까지 미뤄지는데, 아래 save()는 IDENTITY 채번 때문에 즉시 INSERT를
         // 날린다. flush 없이 두면 같은 matcherVersion을 재실행할 때 옛 행이 아직 남아 있어 유니크 제약을 친다.
         repository.flush();
+        NoticeVersion noticeVersion = noticeVersionRepository.findById(noticeVersionId)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 공고버전입니다: " + noticeVersionId));
         for (NoticeHousing housing : housingRepository.findByNoticeVersionIdOrderByDisplayOrder(noticeVersionId)) {
             String pnu = housing.getSuppliedHousing().getPnu();
-            List<HousingComplex> candidates = pnu == null
+            List<HousingComplex> candidates = pnu == null || noticeVersion.getSupplyType() == null
                     ? List.of()
-                    : complexRepository.findAllByAddressPnu(pnu);
+                    : complexRepository.findAllByAddressPnuAndSupplyType(pnu, noticeVersion.getSupplyType());
             NoticeHousingCatalogMatchStatus status = switch (candidates.size()) {
                 case 0 -> NoticeHousingCatalogMatchStatus.UNMATCHED;
                 case 1 -> NoticeHousingCatalogMatchStatus.MATCHED_PNU;

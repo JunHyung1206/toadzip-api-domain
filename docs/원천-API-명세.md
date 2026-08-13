@@ -14,7 +14,7 @@
 
 | API ID | 이름 | 고정 경로 | 응답 행의 알갱이 | 주로 받는 정보 | 주요 저장 테이블 |
 | --- | --- | --- | --- | --- | --- |
-| 15110581 | 마이홈 공공임대주택 단지정보 | `HWSPR04/rentalHouseGwList` | 단지 × 공급유형 × 주택형 | 단지, 주소, PNU, 주택형, 기준 임대조건 | `housing_provider_agency`, `housing_complex`, `complex_rental_program`, `unit_type` |
+| 15110581 | 마이홈 공공임대주택 단지정보 | `HWSPR04/rentalHouseGwList` | 단지 × 공급유형 × 주택형 | 단지, 주소, PNU, 주택형, 기준 임대조건 | `housing_complex`, `unit_type` |
 | 15108420 | 마이홈 공공주택 모집공고 | `HWSPR02/rsdtRcritNtcList` | 공고버전 × 공급행 | 공고 이력, 정정 체인, 공급 대상, 공고 임대조건 | `recruitment_notice`, `notice_version`, `notice_housing` |
 | 15057999 | LH 분양임대공고별 상세정보 | `lhLeaseNoticeDtlInfo1/getLeaseNoticeDtlInfo1` | 공고버전 한 건 아래 여러 데이터셋 | 정정사유, 일정, 접수처, 단지 상세, 첨부 | `lh_notice_supplement`와 네 자식 테이블 |
 | 15056765 | LH 분양임대공고별 공급정보 | `lhLeaseNoticeSplInfo1/getLeaseNoticeSplInfo1` | 공고버전 × 단지 × 주택형 | 주택형별 전체·금회 공급 세대수 | `lh_unit_supply_batch`, `lh_unit_supply` |
@@ -120,15 +120,15 @@ GET /1613000/HWSPR04/rentalHouseGwList
 | 필드 | 의미 | 저장 위치/처리 |
 | --- | --- | --- |
 | `hsmpSn` | 마이홈 단지 식별자 | `housing_complex.source_complex_id` |
-| `insttNm` | 공급기관명 | `housing_provider_agency.code/name` |
+| `insttNm` | 공급기관명 | `housing_complex.supply_institution_name` |
 | `brtcCode` / `brtcNm` | 광역시도 코드/명 | `housing_complex.province_code/province_name` |
 | `signguCode` / `signguNm` | 시군구 코드/명 | `housing_complex.district_code/district_name` |
 | `hsmpNm` | 단지명 | `housing_complex.name` |
 | `rnAdres` | 도로명주소 | `housing_complex.road_address` |
 | `pnu` | 19자리 필지고유번호 | `housing_complex.pnu`; 앞 10자리는 법정동코드로도 저장 |
 | `competDe` | 준공일 | 날짜로 변환해 `housing_complex.completion_date` |
-| `hshldCo` | 해당 단지·공급유형 전체 세대수 | `complex_rental_program.unit_count` |
-| `suplyTyNm` | 공급유형명 | `complex_rental_program.supply_type_name/supply_type` |
+| `hshldCo` | 해당 단지·공급유형 전체 세대수 | `housing_complex.unit_count` |
+| `suplyTyNm` | 공급유형명 | `housing_complex.supply_type_name/supply_type` |
 | `styleNm` | 주택형명 | `unit_type.type_name` |
 | `suplyPrvuseAr` / `suplyCmnuseAr` | 전용면적/주거공용면적 | `unit_type.exclusive_area/residential_common_area` |
 | `houseTyNm` | 주택유형명 | `housing_complex.house_type_name/house_type` |
@@ -477,15 +477,15 @@ GET /B552555/lhLeaseInfo1/lhLeaseInfo1
 | 필드 | 의미 | 저장 위치/처리 |
 | --- | --- | --- |
 | `ARA_NM` | 지역명 | `lh_lease_info.area_name`; 카탈로그 지역명과 비교 |
-| `AIS_TP_CD_NM` | 공급유형명 | `lh_lease_info.supply_type_name`; 카탈로그 프로그램과 비교 |
+| `AIS_TP_CD_NM` | 공급유형명 | `lh_lease_info.supply_type_name`; 카탈로그 `HousingComplex`와 비교 |
 | `SBD_LGO_NM` | LH 단지명 | `lh_lease_info.complex_label`; 이름 매칭의 비교값 |
-| `SUM_HSH_CNT` | 단지·공급유형 전체 세대수 | `lh_lease_info.complex_total_unit_count`; `ComplexRentalProgram.unit_count` 검증 |
+| `SUM_HSH_CNT` | 단지·공급유형 전체 세대수 | `lh_lease_info.complex_total_unit_count`; `HousingComplex.unit_count` 검증 |
 | `DDO_AR` | 전용면적(㎡) | `lh_lease_info.exclusive_area`; `UnitType.exclusive_area`와 정확 비교 |
 | `HSH_CNT` | 해당 전용면적 주택형 전체 세대수 | `lh_lease_info.total_unit_count` 및 확정된 `unit_type.total_unit_count` |
 | `resHeader.RS_DTTM` | 원천 응답 시각 | `lh_lease_info_batch.source_responded_at` |
 
 이 API에는 단지 ID·PNU·상세주소가 없다. 따라서 `ARA_NM`·`SBD_LGO_NM`·공급유형·
-`SUM_HSH_CNT`가 하나의 카탈로그 프로그램으로 좁혀지고, `DDO_AR`가
+`SUM_HSH_CNT`가 하나의 카탈로그 단지·공급유형으로 좁혀지고, `DDO_AR`가
 `BigDecimal` 기준으로 정확히 하나의 `UnitType`과 일치할 때만 `HSH_CNT`를 반영한다.
 ±0.05㎡ 근사 매칭은 사용하지 않는다. 같은 UnitType을 가리키는 원천행이 여러 개면
 모두 `AMBIGUOUS`로 보류하고 마지막 행이 덮어쓰지 못하게 한다.

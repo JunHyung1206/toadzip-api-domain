@@ -499,7 +499,7 @@ final class MyHomeFixtures {
                 complexItem(90003L, "서울특별시 강남구 테스트로 3-1", "국민임대", "아파트", "20200101", 10, "50B"));
     }
 
-    /** 국민임대는 세대수가 갈리고, 행복주택은 일관된다. 국민임대 프로그램만 제외되어야 한다. */
+    /** 국민임대는 세대수가 갈리고, 행복주택은 일관된다. 국민임대 공급유형 묶음만 제외되어야 한다. */
     static List<MyHomeComplexItem> rowsWithOneConflictingAndOneValidProgram() {
         String address = "서울특별시 강남구 테스트로 4";
         return List.of(

@@ -9,11 +9,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import test.domain.housing.Address;
-import test.domain.housing.ComplexRentalProgram;
-import test.domain.housing.ComplexRentalProgramRepository;
 import test.domain.housing.LhLeaseInfo;
 import test.domain.housing.LhLeaseInfoBatch;
 import test.domain.housing.LhLeaseInfoBatchRepository;
+import test.domain.housing.HousingComplex;
+import test.domain.housing.HousingComplexRepository;
 import test.domain.housing.UnitType;
 import test.domain.housing.UnitTypeRepository;
 import test.domain.ingest.IngestReport;
@@ -53,7 +53,7 @@ public class LhLeaseInfoIngestService {
     private final ObjectMapper objectMapper;
     private final LhLeaseInfoBatchRepository batchRepository;
     private final LhLeaseInfoUnitTypeMatchRepository matchRepository;
-    private final ComplexRentalProgramRepository programRepository;
+    private final HousingComplexRepository complexRepository;
     private final UnitTypeRepository unitTypeRepository;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
@@ -62,7 +62,7 @@ public class LhLeaseInfoIngestService {
                                     ObjectMapper objectMapper,
                                     LhLeaseInfoBatchRepository batchRepository,
                                     LhLeaseInfoUnitTypeMatchRepository matchRepository,
-                                    ComplexRentalProgramRepository programRepository,
+                                    HousingComplexRepository complexRepository,
                                     UnitTypeRepository unitTypeRepository,
                                     PlatformTransactionManager transactionManager,
                                     Clock clock) {
@@ -70,7 +70,7 @@ public class LhLeaseInfoIngestService {
         this.objectMapper = objectMapper;
         this.batchRepository = batchRepository;
         this.matchRepository = matchRepository;
-        this.programRepository = programRepository;
+        this.complexRepository = complexRepository;
         this.unitTypeRepository = unitTypeRepository;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -150,10 +150,10 @@ public class LhLeaseInfoIngestService {
     }
 
     private void match(LhLeaseInfoBatch batch) {
-        Map<CatalogKey, List<ComplexRentalProgram>> programs = programsByKey();
+        Map<CatalogKey, List<HousingComplex>> complexes = complexesByKey();
         LocalDateTime now = LocalDateTime.now(clock);
         List<MatchDecision> decisions = batch.getLeaseInfos().stream()
-                .map(leaseInfo -> evaluate(leaseInfo, programs, now))
+                .map(leaseInfo -> evaluate(leaseInfo, complexes, now))
                 .toList();
         Map<Long, Integer> sourceRowsByUnitType = new HashMap<>();
         for (MatchDecision decision : decisions) {
@@ -174,42 +174,42 @@ public class LhLeaseInfoIngestService {
         }
     }
 
-    private Map<CatalogKey, List<ComplexRentalProgram>> programsByKey() {
-        Map<CatalogKey, List<ComplexRentalProgram>> programs = new HashMap<>();
-        for (ComplexRentalProgram program : programRepository.findAll()) {
-            CatalogKey key = CatalogKey.from(program);
+    private Map<CatalogKey, List<HousingComplex>> complexesByKey() {
+        Map<CatalogKey, List<HousingComplex>> complexes = new HashMap<>();
+        for (HousingComplex complex : complexRepository.findAll()) {
+            CatalogKey key = CatalogKey.from(complex);
             if (key != null) {
-                programs.computeIfAbsent(key, ignored -> new ArrayList<>()).add(program);
+                complexes.computeIfAbsent(key, ignored -> new ArrayList<>()).add(complex);
             }
         }
-        return programs;
+        return complexes;
     }
 
     private MatchDecision evaluate(LhLeaseInfo leaseInfo,
-                                   Map<CatalogKey, List<ComplexRentalProgram>> programs,
+                                   Map<CatalogKey, List<HousingComplex>> complexes,
                                    LocalDateTime now) {
-        List<ComplexRentalProgram> programCandidates = programs.getOrDefault(CatalogKey.from(leaseInfo), List.of());
-        if (programCandidates.isEmpty()) {
+        List<HousingComplex> complexCandidates = complexes.getOrDefault(CatalogKey.from(leaseInfo), List.of());
+        if (complexCandidates.isEmpty()) {
             return decision(leaseInfo, null, LhLeaseInfoUnitTypeMatchStatus.UNMATCHED, 0, now,
-                    "지역·단지명·공급유형이 모두 같은 카탈로그 프로그램이 없음");
+                    "지역·단지명·공급유형이 모두 같은 카탈로그 단지가 없음");
         }
-        if (programCandidates.size() > 1) {
+        if (complexCandidates.size() > 1) {
             return decision(leaseInfo, null, LhLeaseInfoUnitTypeMatchStatus.AMBIGUOUS,
-                    programCandidates.size(), now, "같은 지역·단지명·공급유형 카탈로그 프로그램이 여러 건");
+                    complexCandidates.size(), now, "같은 지역·단지명·공급유형 카탈로그 단지가 여러 건");
         }
 
-        ComplexRentalProgram program = programCandidates.getFirst();
+        HousingComplex complex = complexCandidates.getFirst();
         if (leaseInfo.getComplexTotalUnitCount() == null
-                || !Objects.equals(leaseInfo.getComplexTotalUnitCount(), program.getUnitCount())) {
+                || !Objects.equals(leaseInfo.getComplexTotalUnitCount(), complex.getUnitCount())) {
             return decision(leaseInfo, null, LhLeaseInfoUnitTypeMatchStatus.CONFLICT_PROGRAM_UNIT_COUNT,
-                    1, now, "SUM_HSH_CNT가 카탈로그 프로그램 총세대수와 다름");
+                    1, now, "SUM_HSH_CNT가 카탈로그 단지·공급유형 총세대수와 다름");
         }
         if (leaseInfo.getExclusiveArea() == null || leaseInfo.getTotalUnitCount() == null) {
             return decision(leaseInfo, null, LhLeaseInfoUnitTypeMatchStatus.UNMATCHED,
                     0, now, "DDO_AR 또는 HSH_CNT가 없음");
         }
 
-        List<UnitType> unitTypeCandidates = unitTypeRepository.findByComplexRentalProgram(program).stream()
+        List<UnitType> unitTypeCandidates = unitTypeRepository.findByHousingComplex(complex).stream()
                 .filter(unitType -> unitType.getExclusiveArea() != null
                         && unitType.getExclusiveArea().compareTo(leaseInfo.getExclusiveArea()) == 0)
                 .toList();
@@ -301,7 +301,7 @@ public class LhLeaseInfoIngestService {
     }
 
     /*
-     * 15059475는 단지 ID를 주지 않는다. 그래서 키가 하나의 프로그램, 하나의 정확한 전용면적으로
+     * 15059475는 단지 ID를 주지 않는다. 그래서 키가 하나의 단지·공급유형, 하나의 정확한 전용면적으로
      * 좁혀진 원천행만 UnitType에 반영한다.
      */
     private record CatalogKey(String areaName, String complexLabel, String supplyTypeName) {
@@ -311,13 +311,13 @@ public class LhLeaseInfoIngestService {
                     normalize(leaseInfo.getSupplyTypeName()));
         }
 
-        static CatalogKey from(ComplexRentalProgram program) {
-            Address address = program.getHousingComplex().getAddress();
+        static CatalogKey from(HousingComplex complex) {
+            Address address = complex.getAddress();
             String province = address == null ? null : address.getProvinceName();
             String district = address == null ? null : address.getDistrictName();
             String areaName = province == null ? null : province + (district == null ? "" : " " + district);
-            CatalogKey key = new CatalogKey(normalize(areaName), normalize(program.getHousingComplex().getName()),
-                    normalize(program.getSupplyTypeName()));
+            CatalogKey key = new CatalogKey(normalize(areaName), normalize(complex.getName()),
+                    normalize(complex.getSupplyTypeName()));
             return key.complete() ? key : null;
         }
 

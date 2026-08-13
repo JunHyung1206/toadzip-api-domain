@@ -65,15 +65,15 @@ LH 원천(`B552555`)은 다른 규칙을 쓴다. `AHFL`=첨부파일, `CMN`=공�
 | 필드 | 타입 | 의미 | 도메인 대응 |
 | --- | --- | --- | --- |
 | `hsmpSn` | Long | 단지 식별자 | `HousingComplex.sourceComplexId` |
-| `insttNm` | String | 공급기관명 | `HousingProviderAgency` |
+| `insttNm` | String | 공급기관명 | `HousingComplex.supplyInstitutionName` |
 | `brtcCode`/`brtcNm` | String | 광역시도 코드/명 | `Address.provinceCode/Name` |
 | `signguCode`/`signguNm` | String | 시군구 코드/명 | `Address.districtCode/Name` |
 | `hsmpNm` | String | 단지명 (매입임대는 지역명) | `HousingComplex.name` |
 | `rnAdres` | String | 도로명주소 | `Address.roadAddress` |
 | `pnu` | String | 필지고유번호 19자리 | `Address.pnu` (단지 API ↔ 공고 API를 잇는 유일한 안전한 키) |
 | `competDe` | String | 준공일자 `yyyyMMdd` | `HousingComplex.completionDate/Year` |
-| `hshldCo` | Integer | 세대수 — **단지 단위가 아니라 (단지,공급유형) 단위** | `ComplexRentalProgram.unitCount` |
-| `suplyTyNm` | String | 공급유형명 | `SupplyType.from(...)` |
+| `hshldCo` | Integer | 세대수 — **단지 단위가 아니라 (단지,공급유형) 단위** | `HousingComplex.unitCount` |
+| `suplyTyNm` | String | 공급유형명 | `HousingComplex.supplyTypeName/supplyType` |
 | `styleNm` | String | 주택형명("36", "51A") | `UnitType.typeName` |
 | `suplyPrvuseAr`/`suplyCmnuseAr` | BigDecimal | 전용/공용면적 | `UnitType.exclusiveArea/residentialCommonArea` |
 | `houseTyNm` | String | 주택유형명 | `HouseType.from(...)` |
@@ -314,7 +314,7 @@ curl -X POST "localhost:8080/admin/ingest/lease-infos"
 | `ARA_NM` | 지역명 | `LhLeaseInfo.areaName` |
 | `AIS_TP_CD_NM` | 공급유형명 | `LhLeaseInfo.supplyTypeName` |
 | `SBD_LGO_NM` | LH 단지명 | `LhLeaseInfo.complexLabel` |
-| `SUM_HSH_CNT` | 단지·공급유형 전체 세대수 | `LhLeaseInfo.complexTotalUnitCount`; 프로그램 검증 |
+| `SUM_HSH_CNT` | 단지·공급유형 전체 세대수 | `LhLeaseInfo.complexTotalUnitCount`; `HousingComplex.unitCount` 검증 |
 | `DDO_AR` | 전용면적(㎡) | `LhLeaseInfo.exclusiveArea`; UnitType 매칭 |
 | `HSH_CNT` | 전용면적 주택형 전체 세대수 | `LhLeaseInfo.totalUnitCount` → `UnitType.totalUnitCount` |
 | `RS_DTTM` | 원천 응답 시각 | `LhLeaseInfoBatch.sourceRespondedAt` |
@@ -322,7 +322,7 @@ curl -X POST "localhost:8080/admin/ingest/lease-infos"
 ### 매칭과 보존 규칙
 
 이 원천에는 단지 ID·PNU·상세주소가 없다. 따라서 지역·단지명·공급유형·
-`SUM_HSH_CNT`가 하나의 카탈로그 프로그램으로 좁혀지고, `DDO_AR`가 정확히 하나의
+`SUM_HSH_CNT`가 하나의 카탈로그 단지·공급유형으로 좁혀지고, `DDO_AR`가 정확히 하나의
 `UnitType.exclusiveArea`와 일치할 때만 `HSH_CNT`를 기록한다. `BigDecimal` 비교라
 36.97과 36.9700은 같지만, 서로 다른 수치에는 ±0.05㎡ 근사를 적용하지 않는다.
 
