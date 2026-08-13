@@ -257,26 +257,24 @@ LH 원천(`B552555`)은 다른 규칙을 쓴다. `AHFL`=첨부파일, `CMN`=공�
 
 ### 단지·주택형 매칭 — `NoticeHousingUnitTypeMatchService`
 
-한 `PAN_ID` 응답에 단지 여러 곳이 섞여 오므로, `NoticeHousingCatalogMatch`가 PNU로 이미 확정한 단지 위에서만 시도한다.
+**`SBD_LGO_NM`을 카탈로그 단지명과 대조하면 안 된다.** 두 원천의 명명 체계가 다르다 — 실측 19%만 맞았다([원천-정리.md](원천-정리.md) 3장). 같은 LH 계열인 15057999의 `LCC_NT_NM`과 맞춰야 하고, 그건 실측 290/290이다.
 
 ```
-NoticeHousing → (NoticeHousingCatalogMatch, MATCHED_PNU) → HousingComplex
-    → 같은 이름의 LhUnitSupply 행들 (SBD_LGO_NM == HousingComplex.name)
-        → 전용면적이 허용오차(0.05㎡) 안에서 유일한 UnitType 후보면 MATCHED
+LhUnitSupply ─LH단지명─> LhComplexDetail ─주소─> NoticeHousing ─PNU─> HousingComplex ─전용면적─> UnitType
+              290/290      (LhMatch 95건)     (CatalogMatch 97건)
 ```
 
-주택형명(`HTY_NNA`)은 매칭 키로 쓰지 않는다 — "59㎡"처럼 단위가 붙어 카탈로그의 `styleNm`("59")과 표기가 갈리기 때문이다. 대신 두 원천 다 ㎡ 소수로 오는 **전용면적**을 근거로 삼고, 원문 주택형명은 `sourceTypeName`에 증거로만 남긴다.
+주택형명(`HTY_NNA`)도 매칭 키로 쓰지 않는다 — "59㎡"처럼 단위가 붙어 카탈로그 `styleNm`("59")과 표기가 갈린다. 두 원천 다 ㎡ 소수로 오는 **전용면적**(허용오차 0.05㎡)이 근거고, 원문은 `sourceTypeName`에 증거로만 남는다.
 
-| 상태 | 의미 |
-| --- | --- |
-| `MATCHED` | 전용면적 근처 카탈로그 주택형이 정확히 하나 |
-| `AMBIGUOUS` | 둘 이상 |
-| `UNMATCHED` | 하나도 없음(공급행은 있지만 카탈로그와 안 맞음) |
-| `NO_SUPPLY_ROW` | 단지는 확정됐지만 그 이름의 15056765 공급행이 없음 |
-| `NO_CATALOG_MATCH` | 이 공급행 자체가 아직 단지 카탈로그와 확정 매칭되지 않음 |
-| `SOURCE_DATA_MISSING` | 이 공고버전에 15056765를 아직 안 받았거나, 받았는데 데이터셋이 없었음 |
+| 상태 | 의미 | 실측(290행) |
+| --- | --- | ---: |
+| `MATCHED` | 전용면적 근처 카탈로그 주택형이 정확히 하나 | 202 |
+| `AMBIGUOUS` | 둘 이상 — 대개 공급대상만 다른 같은 면적 | 30 |
+| `UNMATCHED` | 단지는 확정됐는데 면적이 맞는 주택형이 없음 | 0 |
+| `NO_CATALOG_PATH` | 카탈로그까지 가는 길이 끊김. `reason`에 구간이 남는다 | 58 |
+| `SOURCE_DATA_MISSING` | 15056765를 아직 안 받았거나 데이터셋이 없었음 | — |
 
-`/admin/ingest/matches/catalog`로 단지를 먼저 확정한 뒤 `/admin/ingest/matches/unit-type`을 돌린다. [NoticeHousingUnitTypeMatchService.java:59](../src/main/java/test/domain/match/NoticeHousingUnitTypeMatchService.java)
+`/admin/ingest/matches/lh` → `/matches/catalog` → `/matches/unit-type` 순서로 돌린다. [NoticeHousingUnitTypeMatchService.java](../src/main/java/test/domain/match/NoticeHousingUnitTypeMatchService.java)
 
 ## 6. 검토했으나 안 쓰는 원천
 
