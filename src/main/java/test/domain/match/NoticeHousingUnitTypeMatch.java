@@ -24,16 +24,22 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * {@link NoticeHousing} 한 행이 15056765 공급행({@link LhUnitSupply})을 거쳐 어느 카탈로그
- * 주택형({@link UnitType})과 맞았는지 기록한 파생 결과.
+ * 15056765 공급행({@link LhUnitSupply}) 하나가 카탈로그 주택형({@link UnitType})의 어느 행인지 기록한
+ * 파생 결과. <b>공급행 하나가 결과 한 줄</b>이고, 못 맞춘 것도 이유를 달아 남긴다.
  *
- * <p>{@link NoticeHousingCatalogMatch}가 먼저 확정한 단지 위에서만 시도한다 — 단지 자체가 안 붙었는데
- * 주택형만 붙이면 근거 없는 연결이 된다. 그 위에서 15056765의 단지명({@code SBD_LGO_NM})이 그 단지 이름과
- * 같은 공급행만 후보로 삼고, 전용면적으로 {@link UnitType}과 대조한다(주택형명은 "59㎡"처럼 표기가
- * 갈려 근거로 안 쓴다 — {@link #sourceTypeName}에 원문만 남긴다).
+ * <p><b>단지명을 카탈로그와 직접 대조하지 않는다.</b> 마이홈은 동네 통칭("하나로아파트"), LH는
+ * 사업지구명+블록("군산조촌부향")이라 실측 85쌍 중 16쌍(19%)만 맞았다. 대신 <b>LH 이름끼리</b> 잇는다 —
+ * 15056765의 {@code SBD_LGO_NM}과 15057999의 {@code LCC_NT_NM}은 같은 LH 명명이라 실측 290행이 전부 맞았다.
  *
- * <p>한 {@code NoticeHousing}(단지 하나)에 주택형이 여러 개면 15056765 공급행 수만큼 행이 생긴다 —
- * {@link NoticeHousingLhMatch}와 달리 1:1이 아니라 1:N이다.
+ * <pre>
+ *   LhUnitSupply ─LH단지명─&gt; LhComplexDetail ─주소─&gt; NoticeHousing ─PNU─&gt; HousingComplex ─전용면적─&gt; UnitType
+ * </pre>
+ *
+ * <p>가운데 {@link NoticeHousing} 을 거치는 게 우회처럼 보이지만 필연이다 — LH 계열에는 PNU가 없고
+ * 카탈로그에는 LH 이름이 없어서, <b>주소와 PNU를 둘 다 가진 유일한 행</b>인 공급행만이 두 세계를 잇는다.
+ *
+ * <p>앞의 두 구간은 {@link NoticeHousingLhMatch}, {@link NoticeHousingCatalogMatch} 가 이미 계산해 둔 것을
+ * 그대로 쓴다. 그래서 이 matcher 는 그 둘의 {@code matcherVersion} 을 입력으로 받는다.
  */
 @Entity
 @Table(
@@ -55,13 +61,15 @@ public class NoticeHousingUnitTypeMatch {
     @JoinColumn(name = "notice_version_id", nullable = false)
     private NoticeVersion noticeVersion;
 
+    /** 이 결과가 설명하는 15056765 공급행. 이 matcher 의 주어라 항상 있다. */
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "notice_housing_id", nullable = false)
-    private NoticeHousing noticeHousing;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "lh_unit_supply_id")
+    @JoinColumn(name = "lh_unit_supply_id", nullable = false)
     private LhUnitSupply lhUnitSupply;
+
+    /** 체인 중간에서 확정한 공급행. 주소·PNU 구간이 끊기면 없다. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "notice_housing_id")
+    private NoticeHousing noticeHousing;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "unit_type_id")
@@ -100,8 +108,8 @@ public class NoticeHousingUnitTypeMatch {
     private int resultOrder;
 
     public NoticeHousingUnitTypeMatch(NoticeVersion noticeVersion,
-                                      NoticeHousing noticeHousing,
                                       LhUnitSupply lhUnitSupply,
+                                      NoticeHousing noticeHousing,
                                       UnitType unitType,
                                       NoticeHousingUnitTypeMatchStatus status,
                                       Integer suppliedUnitCount,

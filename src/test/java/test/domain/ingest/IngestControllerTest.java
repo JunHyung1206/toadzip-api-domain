@@ -76,6 +76,6 @@ class IngestControllerTest {
 
         mockMvc.perform(post("/admin/ingest/matches/unit-type").param("noticeVersionId", "7"))
                 .andExpect(status().isOk());
-        verify(unitTypeMatchService).match(7L, "catalog-pnu-v1", "unit-type-area-v1");
+        verify(unitTypeMatchService).match(7L, "lh-address-unit-v1", "catalog-pnu-v1", "unit-type-area-v1");
     }
 }

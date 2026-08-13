@@ -100,12 +100,13 @@ public class IngestController {
     }
 
     /**
-     * {@link NoticeHousingUnitTypeMatchService} 로 공고 세대를 카탈로그 주택형과 잇는다.
-     * {@code /matches/catalog} 를 먼저 돌려 둬야 단지가 확정되어 있다.
+     * {@link NoticeHousingUnitTypeMatchService} 로 15056765 공급행을 카탈로그 주택형과 잇는다.
+     * 체인이 앞의 두 매칭 위에 서 있어 {@code /matches/lh} 와 {@code /matches/catalog} 를 먼저 돌려야 한다.
      */
     @PostMapping("/matches/unit-type")
     public void matchUnitType(@RequestParam Long noticeVersionId) {
-        unitTypeMatchService.match(noticeVersionId, "catalog-pnu-v1", "unit-type-area-v1");
+        unitTypeMatchService.match(noticeVersionId,
+                "lh-address-unit-v1", "catalog-pnu-v1", "unit-type-area-v1");
     }
 
     /**
