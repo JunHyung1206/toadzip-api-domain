@@ -7,10 +7,12 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import test.domain.ingest.lh.LhNoticeDetailIngestService;
+import test.domain.ingest.lh.LhUnitSupplyIngestService;
 import test.domain.ingest.myhome.MyHomeComplexIngestService;
 import test.domain.ingest.myhome.MyHomeNoticeIngestService;
 import test.domain.match.NoticeHousingCatalogMatchService;
 import test.domain.match.NoticeHousingLhMatchService;
+import test.domain.match.NoticeHousingUnitTypeMatchService;
 
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -31,9 +33,13 @@ class IngestControllerTest {
     @MockitoBean
     private LhNoticeDetailIngestService lhNoticeDetailIngestService;
     @MockitoBean
+    private LhUnitSupplyIngestService lhUnitSupplyIngestService;
+    @MockitoBean
     private NoticeHousingCatalogMatchService catalogMatchService;
     @MockitoBean
     private NoticeHousingLhMatchService lhMatchService;
+    @MockitoBean
+    private NoticeHousingUnitTypeMatchService unitTypeMatchService;
     @MockitoBean
     @Qualifier("lhApiClient")
     private OpenApiClient lhApiClient;
@@ -67,5 +73,9 @@ class IngestControllerTest {
         mockMvc.perform(post("/admin/ingest/matches/lh").param("noticeVersionId", "7"))
                 .andExpect(status().isOk());
         verify(lhMatchService).match(7L, "lh-address-unit-v1");
+
+        mockMvc.perform(post("/admin/ingest/matches/unit-type").param("noticeVersionId", "7"))
+                .andExpect(status().isOk());
+        verify(unitTypeMatchService).match(7L, "catalog-pnu-v1", "unit-type-area-v1");
     }
 }

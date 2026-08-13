@@ -9,10 +9,12 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import test.domain.ingest.lh.LhNoticeDetailIngestService;
+import test.domain.ingest.lh.LhUnitSupplyIngestService;
 import test.domain.ingest.myhome.MyHomeComplexIngestService;
 import test.domain.ingest.myhome.MyHomeNoticeIngestService;
 import test.domain.match.NoticeHousingCatalogMatchService;
 import test.domain.match.NoticeHousingLhMatchService;
+import test.domain.match.NoticeHousingUnitTypeMatchService;
 import tools.jackson.databind.JsonNode;
 
 /** 적재 트리거와 원천 응답 확인용. 운영에 열 엔드포인트가 아니라 개발 중 확인용이다. */
@@ -23,8 +25,10 @@ public class IngestController {
     private final MyHomeComplexIngestService complexIngestService;
     private final MyHomeNoticeIngestService noticeIngestService;
     private final LhNoticeDetailIngestService lhNoticeDetailIngestService;
+    private final LhUnitSupplyIngestService lhUnitSupplyIngestService;
     private final NoticeHousingCatalogMatchService catalogMatchService;
     private final NoticeHousingLhMatchService lhMatchService;
+    private final NoticeHousingUnitTypeMatchService unitTypeMatchService;
     private final OpenApiClient lhApiClient;
     private final OpenApiClient myhomeNoticeApiClient;
     private final OpenApiClient myhomeComplexApiClient;
@@ -32,16 +36,20 @@ public class IngestController {
     public IngestController(MyHomeComplexIngestService complexIngestService,
                             MyHomeNoticeIngestService noticeIngestService,
                             LhNoticeDetailIngestService lhNoticeDetailIngestService,
+                            LhUnitSupplyIngestService lhUnitSupplyIngestService,
                             NoticeHousingCatalogMatchService catalogMatchService,
                             NoticeHousingLhMatchService lhMatchService,
+                            NoticeHousingUnitTypeMatchService unitTypeMatchService,
                             @Qualifier("lhApiClient") OpenApiClient lhApiClient,
                             @Qualifier("myhomeNoticeApiClient") OpenApiClient myhomeNoticeApiClient,
                             @Qualifier("myhomeComplexApiClient") OpenApiClient myhomeComplexApiClient) {
         this.complexIngestService = complexIngestService;
         this.noticeIngestService = noticeIngestService;
         this.lhNoticeDetailIngestService = lhNoticeDetailIngestService;
+        this.lhUnitSupplyIngestService = lhUnitSupplyIngestService;
         this.catalogMatchService = catalogMatchService;
         this.lhMatchService = lhMatchService;
+        this.unitTypeMatchService = unitTypeMatchService;
         this.lhApiClient = lhApiClient;
         this.myhomeNoticeApiClient = myhomeNoticeApiClient;
         this.myhomeComplexApiClient = myhomeComplexApiClient;
@@ -70,6 +78,15 @@ public class IngestController {
         return lhNoticeDetailIngestService.ingest();
     }
 
+    /**
+     * 이미 적재된 LH 공고에 15056765 주택형별 공급정보를 덧입힌다({@link LhUnitSupplyIngestService}).
+     * 공고를 먼저 적재해야 한다. {@code /notice-details} 와는 별도 호출이라 순서가 안 얽힌다.
+     */
+    @PostMapping("/unit-supplies")
+    public IngestReport ingestUnitSupplies() {
+        return lhUnitSupplyIngestService.ingest();
+    }
+
     /** {@link NoticeHousingCatalogMatchService} 로 공고 세대를 단지 카탈로그 PNU와 잇는다. */
     @PostMapping("/matches/catalog")
     public void matchCatalog(@RequestParam Long noticeVersionId) {
@@ -80,6 +97,15 @@ public class IngestController {
     @PostMapping("/matches/lh")
     public void matchLh(@RequestParam Long noticeVersionId) {
         lhMatchService.match(noticeVersionId, "lh-address-unit-v1");
+    }
+
+    /**
+     * {@link NoticeHousingUnitTypeMatchService} 로 공고 세대를 카탈로그 주택형과 잇는다.
+     * {@code /matches/catalog} 를 먼저 돌려 둬야 단지가 확정되어 있다.
+     */
+    @PostMapping("/matches/unit-type")
+    public void matchUnitType(@RequestParam Long noticeVersionId) {
+        unitTypeMatchService.match(noticeVersionId, "catalog-pnu-v1", "unit-type-area-v1");
     }
 
     /**

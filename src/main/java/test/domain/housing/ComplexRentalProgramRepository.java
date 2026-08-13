@@ -11,4 +11,7 @@ public interface ComplexRentalProgramRepository extends JpaRepository<ComplexRen
 
     Optional<ComplexRentalProgram> findByHousingComplexAndSupplyTypeName(
             HousingComplex housingComplex, String supplyTypeName);
+
+    Optional<ComplexRentalProgram> findByHousingComplexAndSupplyType(
+            HousingComplex housingComplex, SupplyType supplyType);
 }
