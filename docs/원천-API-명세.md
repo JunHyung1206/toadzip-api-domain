@@ -1,6 +1,6 @@
 # 원천 API 명세
 
-이 문서는 이 프로젝트가 실제 적재에 쓰는 외부 API 네 개를 설명한다.
+이 문서는 이 프로젝트가 실제 적재에 쓰는 외부 API 다섯 개를 설명한다.
 처음 보는 개발자가 요청을 재현하고, 응답 필드가 어느 테이블로 가며,
 서로 다른 원천이 어떤 키로 이어지는지 파악하는 데 필요한 범위만 담았다.
 
@@ -8,7 +8,7 @@
 
 ## 1. 한눈에 보기
 
-적재 서비스가 고정 호출하는 외부 경로는 아래 네 개뿐이다.
+적재 서비스가 고정 호출하는 외부 경로는 아래 다섯 개다.
 호출은 스케줄러가 아니라 `/admin/ingest/*` 관리 엔드포인트로 명시적으로 시작한다.
 따라서 이 목록은 자동 실행 주기나 운영 스케줄을 뜻하지 않는다.
 
@@ -18,8 +18,9 @@
 | 15108420 | 마이홈 공공주택 모집공고 | `HWSPR02/rsdtRcritNtcList` | 공고버전 × 공급행 | 공고 이력, 정정 체인, 공급 대상, 공고 임대조건 | `recruitment_notice`, `notice_version`, `notice_housing` |
 | 15057999 | LH 분양임대공고별 상세정보 | `lhLeaseNoticeDtlInfo1/getLeaseNoticeDtlInfo1` | 공고버전 한 건 아래 여러 데이터셋 | 정정사유, 일정, 접수처, 단지 상세, 첨부 | `lh_notice_supplement`와 네 자식 테이블 |
 | 15056765 | LH 분양임대공고별 공급정보 | `lhLeaseNoticeSplInfo1/getLeaseNoticeSplInfo1` | 공고버전 × 단지 × 주택형 | 주택형별 전체·금회 공급 세대수 | `lh_unit_supply_batch`, `lh_unit_supply` |
+| 15059475 | LH 임대주택 단지별 면적·세대수 카탈로그 | `lhLeaseInfo1/lhLeaseInfo1` | 지역 × 공급유형 × 단지 × 전용면적 | 단지·주택형별 전체 세대수 | `lh_lease_info_batch`, `lh_lease_info`, `lh_lease_info_unit_type_match`, `unit_type` |
 
-API가 네 개인데 정보 종류가 더 많아 보이는 이유는 15057999 때문이다.
+API가 다섯 개인데 정보 종류가 더 많아 보이는 이유는 15057999 때문이다.
 이 API 한 번의 응답에 일정, 접수처, 단지 상세, 공고 첨부, 단지 이미지가
 각각 별도 데이터셋으로 함께 들어온다.
 
@@ -429,7 +430,71 @@ GET /B552555/lhLeaseNoticeSplInfo1/getLeaseNoticeSplInfo1
 호출 한 번의 메타데이터와 `dsList01` 존재 여부는 `lh_unit_supply_batch`에,
 각 `dsList01` 행은 순서대로 `lh_unit_supply`에 저장한다.
 
-## 8. 원천 연결 키 지도
+## 8. 15059475 — LH 임대단지 주택형 카탈로그
+
+이 원천은 공고가 아니라 LH 임대단지 카탈로그다. 한 `dsList` 행은
+**지역 × 공급유형 × 단지명 × 전용면적** 조합이며, `HSH_CNT`가 그 전용면적
+주택형의 전체 세대수다. `SUM_HSH_CNT`는 같은 단지·공급유형의 전체 세대수다.
+
+```http
+GET https://apis.data.go.kr/B552555/lhLeaseInfo1/lhLeaseInfo1
+```
+
+### 요청
+
+전국을 받을 때는 지역·공급유형 필터를 생략하고 페이지를 반복한다.
+현재 응답 규모에서는 `PG_SZ=9999`, `PAGE=1` 한 번으로 6,710행을 받았다.
+
+| 파라미터 | 필수 | 값/출처 | 설명 |
+| --- | --- | --- | --- |
+| `serviceKey` | O | 환경변수 `DATA_GO_KR_SERVICE_KEY` | 공공데이터포털 인증키 |
+| `CNP_CD` | X | 지역 코드 | 특정 지역만 조회할 때 사용 |
+| `SPL_TP_CD` | X | 공급유형 코드 | 특정 공급유형만 조회할 때 사용 |
+| `PG_SZ` | O | 기본 `9999` | 페이지당 행 수 |
+| `PAGE` | O | 1부터 증가 | 페이지 번호 |
+
+```text
+GET /B552555/lhLeaseInfo1/lhLeaseInfo1
+  ?serviceKey=<REDACTED>&PG_SZ=9999&PAGE=1
+```
+
+### 응답
+
+```json
+[
+  {"dsSch":[{"PG_SZ":"9999","PAGE":"1"}]},
+  {"dsList":[{
+    "ARA_NM":"강원특별자치도 강릉시",
+    "AIS_TP_CD_NM":"행복주택",
+    "SBD_LGO_NM":"강릉교동 행복주택",
+    "SUM_HSH_CNT":"180",
+    "DDO_AR":"36.97",
+    "HSH_CNT":"72"
+  }],"resHeader":[{"SS_CODE":"Y","RS_DTTM":"20260813042736"}]}
+]
+```
+
+| 필드 | 의미 | 저장 위치/처리 |
+| --- | --- | --- |
+| `ARA_NM` | 지역명 | `lh_lease_info.area_name`; 카탈로그 지역명과 비교 |
+| `AIS_TP_CD_NM` | 공급유형명 | `lh_lease_info.supply_type_name`; 카탈로그 프로그램과 비교 |
+| `SBD_LGO_NM` | LH 단지명 | `lh_lease_info.complex_label`; 이름 매칭의 비교값 |
+| `SUM_HSH_CNT` | 단지·공급유형 전체 세대수 | `lh_lease_info.complex_total_unit_count`; `ComplexRentalProgram.unit_count` 검증 |
+| `DDO_AR` | 전용면적(㎡) | `lh_lease_info.exclusive_area`; `UnitType.exclusive_area`와 정확 비교 |
+| `HSH_CNT` | 해당 전용면적 주택형 전체 세대수 | `lh_lease_info.total_unit_count` 및 확정된 `unit_type.total_unit_count` |
+| `resHeader.RS_DTTM` | 원천 응답 시각 | `lh_lease_info_batch.source_responded_at` |
+
+이 API에는 단지 ID·PNU·상세주소가 없다. 따라서 `ARA_NM`·`SBD_LGO_NM`·공급유형·
+`SUM_HSH_CNT`가 하나의 카탈로그 프로그램으로 좁혀지고, `DDO_AR`가
+`BigDecimal` 기준으로 정확히 하나의 `UnitType`과 일치할 때만 `HSH_CNT`를 반영한다.
+±0.05㎡ 근사 매칭은 사용하지 않는다. 같은 UnitType을 가리키는 원천행이 여러 개면
+모두 `AMBIGUOUS`로 보류하고 마지막 행이 덮어쓰지 못하게 한다.
+
+`dsList`가 누락되거나 모든 페이지가 비어 있으면 새 스냅샷을 교체하지 않는다.
+성공한 전국 스냅샷은 `lh_lease_info_batch` 한 건과 그 자식 원천행을 교체하고,
+이전 매칭 결과를 다시 계산한다.
+
+## 9. 원천 연결 키 지도
 
 ```mermaid
 flowchart LR
@@ -440,6 +505,7 @@ flowchart LR
     U["lh_unit_supply SBD_LGO_NM"] -->|"LH 단지명"| L["lh_complex_detail LCC_NT_NM"]
     L -->|"주소 + 세대수"| N
     U -->|"전용면적 ±0.05㎡"| T["unit_type"]
+    I["lh_lease_info 지역·단지명·공급유형·SUM_HSH_CNT"] -->|"정확한 DDO_AR"| T
     C --> T
 ```
 
@@ -451,11 +517,12 @@ flowchart LR
 | LH 공급행 → LH 단지 상세 | `SBD_LGO_NM` = `LCC_NT_NM` | 같은 LH 명명 체계 안에서 단지 연결 |
 | LH 단지 상세 → 공고 공급행 | 주소, 필요 시 세대수 | PNU가 없는 LH 상세를 마이홈 공고행에 연결 |
 | LH 공급행 → 카탈로그 주택형 | 단지 경로 + `DDO_AR`와 `exclusive_area` 차이 ≤ 0.05㎡ | 주택형명 표기 차이를 피하고 면적으로 연결 |
+| LH 단지 카탈로그 → 카탈로그 주택형 | `ARA_NM`·`SBD_LGO_NM`·공급유형·`SUM_HSH_CNT` + `DDO_AR` 정확 일치 | `HSH_CNT`를 `UnitType.totalUnitCount`에 반영 |
 
 `SBD_LGO_NM`을 바로 마이홈 카탈로그 단지명과 비교하지 않는다.
 먼저 같은 LH 계열의 `LCC_NT_NM`에 연결한 뒤 주소와 PNU 경로를 따라간다.
 
-## 9. 적재와 매칭 순서
+## 10. 적재와 매칭 순서
 
 관리 엔드포인트는 아래 순서로 호출한다.
 
@@ -463,26 +530,27 @@ flowchart LR
 2. `POST /admin/ingest/notices` — 15108420 공고와 공급행 적재
 3. `POST /admin/ingest/notice-details` — 15057999 LH 상세 적재
 4. `POST /admin/ingest/unit-supplies` — 15056765 LH 공급행 적재
-5. `POST /admin/ingest/matches/catalog?noticeVersionId=...` — PNU로 카탈로그 연결
-6. `POST /admin/ingest/matches/lh?noticeVersionId=...` — 주소·세대수로 LH 상세 연결
-7. `POST /admin/ingest/matches/unit-type?noticeVersionId=...` — 앞의 두 연결과 전용면적으로 주택형 연결
+5. `POST /admin/ingest/lease-infos` — 15059475 전국 주택형 카탈로그 스냅샷 적재
+6. `POST /admin/ingest/matches/catalog?noticeVersionId=...` — PNU로 카탈로그 연결
+7. `POST /admin/ingest/matches/lh?noticeVersionId=...` — 주소·세대수로 LH 상세 연결
+8. `POST /admin/ingest/matches/unit-type?noticeVersionId=...` — 앞의 두 연결과 전용면적으로 주택형 연결
 
 3번과 4번은 같은 공고를 입력으로 쓰지만 서로 다른 API이므로 선후 의존이 없다.
-5번과 6번도 둘 다 끝난 뒤 7번을 실행하면 된다.
+5번은 공고와 무관한 전국 카탈로그 스냅샷이라 1번의 단지 카탈로그가 있어야 매칭 결과를 만들 수 있다.
+6번과 7번도 둘 다 끝난 뒤 8번을 실행하면 된다.
 
-## 10. 검토했지만 쓰지 않는 원천
+## 11. 검토했지만 쓰지 않는 원천
 
 | 원천 | 제외 이유 |
 | --- | --- |
 | 15058476 공공임대주택 단지 기본정보 | 15110581로 대체된 구버전 |
-| 15059475 LH 단지별 면적·임대조건 | 단지 ID, 주소, PNU가 없어 기존 단지에 안전하게 붙일 수 없음 |
 | 15058530 LH 분양임대공고문 | 현재 마이홈 공고보다 정정 체인, PNU, 임대조건 정보가 부족함 |
 | 15108420 `ltRsdtRcritNtcList` | 분양 모집공고라 건설형 임대 모델의 경계 밖 |
 
 `GET /admin/ingest/probe`는 지정한 경로의 원천 응답을 수동 확인하는 개발 도구다.
 고정 적재 서비스가 아니므로 다섯 번째 원천으로 세지 않는다.
 
-## 11. 현재 범위와 한계
+## 12. 현재 범위와 한계
 
 아래 수치는 2026-08-13 적재 스냅샷이다.
 
@@ -494,6 +562,11 @@ flowchart LR
 | 카탈로그 `UnitType` 확정 연결 | 202 |
 | 같은 면적 후보가 여러 개인 `AMBIGUOUS` | 30 |
 | 카탈로그까지 경로가 끊긴 `NO_CATALOG_PATH` | 58 |
+| `lh_lease_info` 원천행 | 6,710 |
+| 15059475 `MATCHED` | 1,487 |
+| 15059475 `AMBIGUOUS` | 76 |
+| 15059475 `CONFLICT_PROGRAM_UNIT_COUNT` | 8 |
+| 15059475 `UNMATCHED` | 5,139 |
 
 `AMBIGUOUS`는 같은 전용면적에 공급대상만 다른 주택형이 여럿인 경우가 주원인이다.
 `NO_CATALOG_PATH`는 주소 또는 PNU 연결이 끊긴 경우이며 LH 공급행 자체가 잘못됐다는 뜻은 아니다.

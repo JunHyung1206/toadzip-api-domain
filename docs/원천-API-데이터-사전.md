@@ -31,8 +31,9 @@ LH 원천(`B552555`)은 다른 규칙을 쓴다. `AHFL`=첨부파일, `CMN`=공�
 | [15108420](https://www.data.go.kr/data/15108420/openapi.do) | 마이홈포털 공공주택 모집공고 조회 | `apis.data.go.kr/1613000/HWSPR02/rsdtRcritNtcList` (임대만 사용) | 정정 체인, 공고 기본정보, 대상 주택, 공급수, 이번 공고 임대조건. 공고버전별 불변 스냅샷 |
 | [15057999](https://www.data.go.kr/data/15057999/openapi.do) | LH 분양임대공고별 상세정보 조회 | `apis.data.go.kr/B552555/lhLeaseNoticeDtlInfo1/getLeaseNoticeDtlInfo1` | 일정·접수처·정정사유·공고 시점 단지정보·첨부파일. 마이홈이 비운 칸을 채우는 보조 원천 |
 | [15056765](https://www.data.go.kr/data/15056765/openapi.do) | LH 분양임대공고별 공급정보 조회 | `apis.data.go.kr/B552555/lhLeaseNoticeSplInfo1/getLeaseNoticeSplInfo1` | 단지·주택형별 이번 회차 공급 세대수. 마이홈·15057999 어디에도 없는 주택형 배분표 |
+| [15059475](https://www.data.go.kr/data/15059475/openapi.do) | LH 임대주택 단지별 면적·세대수 조회 | `apis.data.go.kr/B552555/lhLeaseInfo1/lhLeaseInfo1` | 지역·단지·전용면적별 전체 세대수 카탈로그. 유일 매칭 때 `UnitType` 보강 |
 
-네 API 모두 계정 단위로 발급되는 같은 인증키(`serviceKey`)를 쓰고 엔드포인트만 다르다. `IngestProperties`가 `lh`/`myhomeNotice`/`myhomeComplex` 세 base-url을 갖고, 15056765는 15057999와 같은 `lhApiClient`(같은 `B552555` 계정)를 그대로 쓴다. [IngestConfig.java:19](../src/main/java/test/domain/ingest/IngestConfig.java)
+다섯 API 모두 계정 단위로 발급되는 같은 인증키(`serviceKey`)를 쓰고 엔드포인트만 다르다. `IngestProperties`가 `lh`/`myhomeNotice`/`myhomeComplex` 세 base-url을 갖고, LH 세 API는 같은 `lhApiClient`(같은 `B552555` 계정)를 그대로 쓴다. [IngestConfig.java:19](../src/main/java/test/domain/ingest/IngestConfig.java)
 
 ## 2. 15110581 — 마이홈 단지정보
 
@@ -276,17 +277,72 @@ LhUnitSupply ─LH단지명─> LhComplexDetail ─주소─> NoticeHousing ─P
 
 `/admin/ingest/matches/lh` → `/matches/catalog` → `/matches/unit-type` 순서로 돌린다. [NoticeHousingUnitTypeMatchService.java](../src/main/java/test/domain/match/NoticeHousingUnitTypeMatchService.java)
 
-## 6. 검토했으나 안 쓰는 원천
+## 6. 15059475 — LH 임대단지 주택형 카탈로그
+
+15059475는 공고가 아니라 전국 LH 임대단지의 전용면적별 전체 세대수 카탈로그다.
+한 `dsList` 행의 `HSH_CNT`가 해당 전용면적 주택형의 전체 세대수이고,
+`SUM_HSH_CNT`는 단지·공급유형 전체 세대수다.
+
+### 요청
+
+```http
+GET https://apis.data.go.kr/B552555/lhLeaseInfo1/lhLeaseInfo1
+```
+
+| 이름 | 필수 | 설명 |
+| --- | --- | --- |
+| `serviceKey` | O | `DATA_GO_KR_SERVICE_KEY` 환경변수 |
+| `CNP_CD` | X | 지역 필터. 생략하면 전국 |
+| `SPL_TP_CD` | X | 공급유형 필터. 생략하면 전체 |
+| `PG_SZ` | O | 페이지 크기. 기본 호출은 `9999` |
+| `PAGE` | O | 1부터 증가하는 페이지 번호 |
+
+```bash
+curl -X POST "localhost:8080/admin/ingest/lease-infos"
+```
+
+### 응답 필드
+
+```json
+{"ARA_NM":"강원특별자치도 강릉시","AIS_TP_CD_NM":"행복주택",
+ "SBD_LGO_NM":"강릉교동 행복주택","SUM_HSH_CNT":"180",
+ "DDO_AR":"36.97","HSH_CNT":"72"}
+```
+
+| 필드 | 뜻 | 도메인 매핑 |
+| --- | --- | --- |
+| `ARA_NM` | 지역명 | `LhLeaseInfo.areaName` |
+| `AIS_TP_CD_NM` | 공급유형명 | `LhLeaseInfo.supplyTypeName` |
+| `SBD_LGO_NM` | LH 단지명 | `LhLeaseInfo.complexLabel` |
+| `SUM_HSH_CNT` | 단지·공급유형 전체 세대수 | `LhLeaseInfo.complexTotalUnitCount`; 프로그램 검증 |
+| `DDO_AR` | 전용면적(㎡) | `LhLeaseInfo.exclusiveArea`; UnitType 매칭 |
+| `HSH_CNT` | 전용면적 주택형 전체 세대수 | `LhLeaseInfo.totalUnitCount` → `UnitType.totalUnitCount` |
+| `RS_DTTM` | 원천 응답 시각 | `LhLeaseInfoBatch.sourceRespondedAt` |
+
+### 매칭과 보존 규칙
+
+이 원천에는 단지 ID·PNU·상세주소가 없다. 따라서 지역·단지명·공급유형·
+`SUM_HSH_CNT`가 하나의 카탈로그 프로그램으로 좁혀지고, `DDO_AR`가 정확히 하나의
+`UnitType.exclusiveArea`와 일치할 때만 `HSH_CNT`를 기록한다. `BigDecimal` 비교라
+36.97과 36.9700은 같지만, 서로 다른 수치에는 ±0.05㎡ 근사를 적용하지 않는다.
+
+같은 UnitType을 가리키는 원천행이 여러 개면 전부 `AMBIGUOUS`로 남기고 갱신하지 않는다.
+`dsList`가 누락되거나 모든 페이지가 비어 있으면 기존 스냅샷과 기존 `UnitType.totalUnitCount`를 보존한다.
+
+실제 2026-08-13 전국 적재 관측값은 원천 6,710행, `MATCHED` 1,487행,
+`AMBIGUOUS` 76행, `CONFLICT_PROGRAM_UNIT_COUNT` 8행, `UNMATCHED` 5,139행이다.
+
+## 7. 검토했으나 안 쓰는 원천
 
 | 데이터 ID | 이름 | 왜 안 쓰나 |
 | --- | --- | --- |
 | [15058476](https://www.data.go.kr/data/15058476/openapi.do) | 공공임대주택 단지 기본정보(LH, 구버전) | 포털 안내가 "마이홈 단지정보(15110581)로 제공 중"이라고 가리킨다. 같은 데이터의 구버전 |
-| [15059475](https://www.data.go.kr/data/15059475/openapi.do) | LH 임대주택 단지별 면적·보증금·월임대료 | 응답에 단지 ID·주소·PNU가 전혀 없다(`ARA_NM`, `SBD_LGO_NM`, 세대수·면적·임대조건뿐). 기존 카탈로그에 안전하게 붙일 키가 없다 |
 | 15058530 LH 분양임대공고문 | LH 공고 원문 조회 | 정정/취소 구분, 이전 버전 연결, PNU, 임대조건이 전부 없다. 마이홈 `url`에 `panId`가 박혀 있어 필요하면 그걸로 잇는다 |
 
-15059475는 응답 봉투가 위 네 API와 또 다르다(최상위가 배열, `resHeader`/`dsList`로 키 검색) — 혹시 나중에 다시 검토하게 되면 `OpenApiClient.findRows`의 LH 분기를 그대로 재사용할 수 있다.
+15059475도 LH 응답 봉투를 사용한다(최상위 배열, `resHeader`/`dsList`로 키 검색).
+`OpenApiClient.findRows`의 LH 분기를 그대로 재사용한다.
 
-## 7. 인증키와 오류 응답
+## 8. 인증키와 오류 응답
 
 공공데이터포털은 Encoding 키와 Decoding 키를 모두 발급한다. `OpenApiClient.encodeServiceKey()`는 키에 이미 `%`가 있으면(Encoding 키) 그대로 쓰고, 없으면(Decoding 키) 한 번만 인코딩한다 — 이미 인코딩된 키를 다시 인코딩하면 `%`가 `%25`로 바뀌어 인증이 깨진다. [OpenApiClient.java:85](../src/main/java/test/domain/ingest/OpenApiClient.java)
 
@@ -315,7 +371,7 @@ LhUnitSupply ─LH단지명─> LhComplexDetail ─주소─> NoticeHousing ─P
 | 국토부 계열(15110581, 15108420) | `response.header.resultCode` ∈ {`00`, `03`} |
 | LH 계열(15057999, 15056765 등, `B552555`) | 배열 안 `resHeader[].SS_CODE` = `Y` |
 
-## 8. Spring 매핑 원칙
+## 9. Spring 매핑 원칙
 
 - 요청 DTO는 전부 `record` + `@JsonIgnoreProperties(ignoreUnknown = true)`다. 원천이 필드를 늘려도 역직렬화가 깨지지 않는다.
 - 원천이 주는 필드는 하나도 버리지 않고 record에 담는다(`MyHomeComplexItem`, `MyHomeNoticeItem`). 안 쓰는 필드라도 나중에 필요해지면 파싱 코드만 추가하면 된다.
