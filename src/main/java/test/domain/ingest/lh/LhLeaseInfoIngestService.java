@@ -9,6 +9,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import test.domain.housing.Address;
+import test.domain.housing.BaseRentTerms;
 import test.domain.housing.LhLeaseInfo;
 import test.domain.housing.LhLeaseInfoBatch;
 import test.domain.housing.LhLeaseInfoBatchRepository;
@@ -144,7 +145,9 @@ public class LhLeaseInfoIngestService {
                         SourceValues.trimToNull(item.complexLabel()),
                         SourceValues.toInt(item.complexTotalUnitCount()),
                         SourceValues.toDecimal(item.exclusiveArea()),
-                        SourceValues.toInt(item.totalUnitCount()));
+                        SourceValues.toInt(item.totalUnitCount()),
+                        SourceValues.toLong(item.deposit()),
+                        SourceValues.toLong(item.monthlyRent()));
             }
         }
     }
@@ -169,9 +172,23 @@ public class LhLeaseInfoIngestService {
             }
             if (decision.status() == LhLeaseInfoUnitTypeMatchStatus.MATCHED) {
                 decision.unitType().updateTotalUnitCount(decision.leaseInfo().getTotalUnitCount());
+                updateBaseRentTerms(decision.unitType(), decision.leaseInfo());
             }
             matchRepository.save(result(decision));
         }
+    }
+
+    private void updateBaseRentTerms(UnitType unitType, LhLeaseInfo leaseInfo) {
+        if (leaseInfo.getDeposit() == null && leaseInfo.getMonthlyRent() == null) {
+            return;
+        }
+        BaseRentTerms current = unitType.getBaseRentTerms();
+        Long deposit = leaseInfo.getDeposit() != null
+                ? leaseInfo.getDeposit() : current == null ? null : current.getDeposit();
+        Long monthlyRent = leaseInfo.getMonthlyRent() != null
+                ? leaseInfo.getMonthlyRent() : current == null ? null : current.getMonthlyRent();
+        Long convertibleDepositLimit = current == null ? null : current.getConvertibleDepositLimit();
+        unitType.updateBaseRentTerms(new BaseRentTerms(deposit, monthlyRent, convertibleDepositLimit));
     }
 
     private Map<CatalogKey, List<HousingComplex>> complexesByKey() {

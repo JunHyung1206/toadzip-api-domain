@@ -204,7 +204,10 @@ public class NoticeHousingUnitTypeMatchService {
                                            String reason,
                                            int order) {
         return new NoticeHousingUnitTypeMatch(noticeVersion, supply, housing, unitType, status,
-                supply.getSuppliedUnitCount(), candidateCount, matcherVersion, now,
+                supply.getSuppliedUnitCount(), supply.getTotalUnitCount(),
+                housing == null ? null : housing.getRentTerms(),
+                unitType == null ? null : unitType.getBaseRentTerms(),
+                candidateCount, matcherVersion, now,
                 supply.getComplexLabel(), supply.getTypeName(), supply.getExclusiveArea(), reason, order);
     }
 }

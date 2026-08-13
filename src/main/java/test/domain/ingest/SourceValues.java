@@ -64,6 +64,16 @@ public final class SourceValues {
         return digits.isEmpty() ? null : Integer.valueOf(digits);
     }
 
+    /** 원천 임대조건 금액을 숫자로 옮긴다. 천 단위 구분기호와 안내 문자는 제거한다. */
+    public static Long toLong(String raw) {
+        String value = trimToNull(raw);
+        if (value == null) {
+            return null;
+        }
+        String digits = value.replaceAll("[^0-9]", "");
+        return digits.isEmpty() ? null : Long.valueOf(digits);
+    }
+
     /** 원천이 면적·금액을 문자열로 준다("59.94"). 형식이 깨지면 null. */
     public static BigDecimal toDecimal(String raw) {
         String value = trimToNull(raw);

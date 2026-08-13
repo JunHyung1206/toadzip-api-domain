@@ -469,7 +469,9 @@ GET /B552555/lhLeaseInfo1/lhLeaseInfo1
     "SBD_LGO_NM":"강릉교동 행복주택",
     "SUM_HSH_CNT":"180",
     "DDO_AR":"36.97",
-    "HSH_CNT":"72"
+    "HSH_CNT":"72",
+    "LS_GMY":"19546000",
+    "RFE":"195460"
   }],"resHeader":[{"SS_CODE":"Y","RS_DTTM":"20260813042736"}]}
 ]
 ```
@@ -482,6 +484,8 @@ GET /B552555/lhLeaseInfo1/lhLeaseInfo1
 | `SUM_HSH_CNT` | 단지·공급유형 전체 세대수 | `lh_lease_info.complex_total_unit_count`; `HousingComplex.unit_count` 검증 |
 | `DDO_AR` | 전용면적(㎡) | `lh_lease_info.exclusive_area`; `UnitType.exclusive_area`와 정확 비교 |
 | `HSH_CNT` | 해당 전용면적 주택형 전체 세대수 | `lh_lease_info.total_unit_count` 및 확정된 `unit_type.total_unit_count` |
+| `LS_GMY` | 현재 카탈로그 주택형 임대보증금 | `lh_lease_info.deposit`; 숫자로 파싱 가능한 경우 확정 `unit_type.baseRentTerms.deposit`에도 반영 |
+| `RFE` | 현재 카탈로그 주택형 월임대료 | `lh_lease_info.monthly_rent`; 숫자로 파싱 가능한 경우 확정 `unit_type.baseRentTerms.monthlyRent`에도 반영 |
 | `resHeader.RS_DTTM` | 원천 응답 시각 | `lh_lease_info_batch.source_responded_at` |
 
 이 API에는 단지 ID·PNU·상세주소가 없다. 따라서 `ARA_NM`·`SBD_LGO_NM`·공급유형·

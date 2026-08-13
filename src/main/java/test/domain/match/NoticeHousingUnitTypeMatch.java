@@ -1,7 +1,10 @@
 package test.domain.match;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.AttributeOverrides;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
@@ -15,6 +18,8 @@ import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import test.domain.housing.BaseRentTerms;
+import test.domain.notice.RentTerms;
 import test.domain.housing.UnitType;
 import test.domain.notice.LhUnitSupply;
 import test.domain.notice.NoticeHousing;
@@ -83,6 +88,30 @@ public class NoticeHousingUnitTypeMatch {
     @Column(name = "supplied_unit_count")
     private Integer suppliedUnitCount;
 
+    /** {@code lhUnitSupply.totalUnitCount} 를 그대로 옮긴 원천 주택형 전체 세대수. */
+    @Column(name = "source_total_unit_count")
+    private Integer sourceTotalUnitCount;
+
+    /** 부모 NoticeHousing의 공고 공급행 조건. 주택형별로 새로 계산한 값이 아니라 같은 값을 반복 보관한다. */
+    @Embedded
+    @AttributeOverrides({
+            @AttributeOverride(name = "deposit", column = @Column(name = "notice_deposit")),
+            @AttributeOverride(name = "downPayment", column = @Column(name = "notice_down_payment")),
+            @AttributeOverride(name = "balance", column = @Column(name = "notice_balance")),
+            @AttributeOverride(name = "monthlyRent", column = @Column(name = "notice_monthly_rent"))
+    })
+    private RentTerms noticeRentTerms;
+
+    /** 15059475 현재 카탈로그 주택형 조건. 공고 당시 조건과 시간 범위가 다르다. */
+    @Embedded
+    @AttributeOverrides({
+            @AttributeOverride(name = "deposit", column = @Column(name = "catalog_deposit")),
+            @AttributeOverride(name = "monthlyRent", column = @Column(name = "catalog_monthly_rent")),
+            @AttributeOverride(name = "convertibleDepositLimit",
+                    column = @Column(name = "catalog_convertible_deposit_limit"))
+    })
+    private BaseRentTerms catalogRentTerms;
+
     @Column(name = "candidate_count", nullable = false)
     private int candidateCount;
 
@@ -113,6 +142,9 @@ public class NoticeHousingUnitTypeMatch {
                                       UnitType unitType,
                                       NoticeHousingUnitTypeMatchStatus status,
                                       Integer suppliedUnitCount,
+                                      Integer sourceTotalUnitCount,
+                                      RentTerms noticeRentTerms,
+                                      BaseRentTerms catalogRentTerms,
                                       int candidateCount,
                                       String matcherVersion,
                                       LocalDateTime evaluatedAt,
@@ -127,6 +159,9 @@ public class NoticeHousingUnitTypeMatch {
         this.unitType = unitType;
         this.status = status;
         this.suppliedUnitCount = suppliedUnitCount;
+        this.sourceTotalUnitCount = sourceTotalUnitCount;
+        this.noticeRentTerms = noticeRentTerms;
+        this.catalogRentTerms = catalogRentTerms;
         this.candidateCount = candidateCount;
         this.matcherVersion = matcherVersion;
         this.evaluatedAt = evaluatedAt;

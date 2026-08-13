@@ -58,9 +58,11 @@ public class LhLeaseInfoBatch {
                              String complexLabel,
                              Integer complexTotalUnitCount,
                              BigDecimal exclusiveArea,
-                             Integer totalUnitCount) {
+                             Integer totalUnitCount,
+                             Long deposit,
+                             Long monthlyRent) {
         leaseInfos.add(new LhLeaseInfo(this, displayOrder, areaName, supplyTypeName, complexLabel,
-                complexTotalUnitCount, exclusiveArea, totalUnitCount));
+                complexTotalUnitCount, exclusiveArea, totalUnitCount, deposit, monthlyRent));
     }
 
     public List<LhLeaseInfo> getLeaseInfos() {

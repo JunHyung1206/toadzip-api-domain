@@ -11,6 +11,8 @@ public record LhLeaseInfoItem(
         @JsonProperty("SBD_LGO_NM") String complexLabel,
         @JsonProperty("SUM_HSH_CNT") String complexTotalUnitCount,
         @JsonProperty("DDO_AR") String exclusiveArea,
-        @JsonProperty("HSH_CNT") String totalUnitCount
+        @JsonProperty("HSH_CNT") String totalUnitCount,
+        @JsonProperty("LS_GMY") String deposit,
+        @JsonProperty("RFE") String monthlyRent
 ) {
 }

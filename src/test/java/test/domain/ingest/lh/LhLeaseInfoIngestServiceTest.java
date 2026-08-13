@@ -10,6 +10,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import test.domain.housing.Address;
+import test.domain.housing.BaseRentTerms;
 import test.domain.housing.HousingComplex;
 import test.domain.housing.HousingComplexRepository;
 import test.domain.housing.LhLeaseInfoBatch;
@@ -71,6 +72,7 @@ class LhLeaseInfoIngestServiceTest {
                     "강릉교동 행복주택", address("강원특별자치도", "강릉시"),
                     SourceSystem.MYHOME_PORTAL, "10001", SupplyType.HAPPY_HOUSE, "행복주택", 180, "LH"));
             matched36 = unitTypeRepository.save(new UnitType(complex, "36", area("36.9700"), area("20.1000")));
+            matched36.updateBaseRentTerms(new BaseRentTerms(10_000_000L, 100_000L, 3_000_000L));
             matched26 = unitTypeRepository.save(new UnitType(complex, "26", area("26.9500"), area("15.0000")));
             ambiguousA = unitTypeRepository.save(new UnitType(complex, "21A", area("21.8400"), area("12.0000")));
             ambiguousB = unitTypeRepository.save(new UnitType(complex, "21B", area("21.8600"), area("12.1000")));
@@ -101,6 +103,8 @@ class LhLeaseInfoIngestServiceTest {
         assertThat(batch.getLeaseInfos()).hasSize(4);
         assertThat(batch.getLeaseInfos().get(0).getComplexTotalUnitCount()).isEqualTo(180);
         assertThat(batch.getLeaseInfos().get(0).getTotalUnitCount()).isEqualTo(72);
+        assertThat(batch.getLeaseInfos().get(0).getDeposit()).isEqualTo(19_546_000L);
+        assertThat(batch.getLeaseInfos().get(0).getMonthlyRent()).isEqualTo(195_460L);
         assertThat(matches).extracting(LhLeaseInfoUnitTypeMatch::getStatus).containsExactly(
                 LhLeaseInfoUnitTypeMatchStatus.MATCHED,
                 LhLeaseInfoUnitTypeMatchStatus.MATCHED,
@@ -108,6 +112,12 @@ class LhLeaseInfoIngestServiceTest {
                 LhLeaseInfoUnitTypeMatchStatus.CONFLICT_PROGRAM_UNIT_COUNT);
         assertThat(unitTypeRepository.findById(matched36.getId()).orElseThrow().getTotalUnitCount()).isEqualTo(72);
         assertThat(unitTypeRepository.findById(matched26.getId()).orElseThrow().getTotalUnitCount()).isEqualTo(36);
+        assertThat(unitTypeRepository.findById(matched36.getId()).orElseThrow().getBaseRentTerms().getDeposit())
+                .isEqualTo(19_546_000L);
+        assertThat(unitTypeRepository.findById(matched36.getId()).orElseThrow().getBaseRentTerms().getMonthlyRent())
+                .isEqualTo(195_460L);
+        assertThat(unitTypeRepository.findById(matched36.getId()).orElseThrow().getBaseRentTerms()
+                .getConvertibleDepositLimit()).isEqualTo(3_000_000L);
         assertThat(unitTypeRepository.findById(ambiguousA.getId()).orElseThrow().getTotalUnitCount()).isNull();
         assertThat(unitTypeRepository.findById(ambiguousB.getId()).orElseThrow().getTotalUnitCount()).isNull();
     }
@@ -182,7 +192,8 @@ class LhLeaseInfoIngestServiceTest {
             [{"dsSch":[{"PG_SZ":"5","PAGE":"1"}]},
              {"dsList":[
                {"SUM_HSH_CNT":"180","HSH_CNT":"72","ARA_NM":"강원특별자치도 강릉시",
-                "AIS_TP_CD_NM":"행복주택","SBD_LGO_NM":"강릉교동 행복주택","DDO_AR":"36.97"},
+                "AIS_TP_CD_NM":"행복주택","SBD_LGO_NM":"강릉교동 행복주택","DDO_AR":"36.97",
+                "LS_GMY":"19546000","RFE":"195460"},
                {"SUM_HSH_CNT":"180","HSH_CNT":"36","ARA_NM":"강원특별자치도 강릉시",
                 "AIS_TP_CD_NM":"행복주택","SBD_LGO_NM":"강릉교동 행복주택","DDO_AR":"26.95"},
                {"SUM_HSH_CNT":"180","HSH_CNT":"72","ARA_NM":"강원특별자치도 강릉시",

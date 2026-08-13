@@ -248,7 +248,7 @@ LH 원천(`B552555`)은 다른 규칙을 쓴다. `AHFL`=첨부파일, `CMN`=공�
 | `SPL_AR` | 공급면적 | `LhUnitSupply.supplyArea` |
 | `HSH_CNT` | 단지·주택형 총세대수 | `LhUnitSupply.totalUnitCount` |
 | `NOW_HSH_CNT` | 이번 회차 공급 세대수 | `LhUnitSupply.suppliedUnitCount` — `NoticeHousing`에 없던 값 |
-| `RFE`/`LS_GMY` | 월임대료/임대보증금 | 받지 않음 — 실측에서 전부 "공고문 참조" 문자열이었다 |
+| `RFE`/`LS_GMY` | 월임대료/임대보증금 | 원문은 보존하지만 실측에서 전부 `공고문 참조` 문자열이라 숫자 컬럼으로 파싱하지 않음 |
 
 `LhUnitSupplyItem`이 이 행을 그대로 옮긴다. [LhUnitSupplyItem.java:17](../src/main/java/test/domain/ingest/lh/LhUnitSupplyItem.java)
 
@@ -306,7 +306,7 @@ curl -X POST "localhost:8080/admin/ingest/lease-infos"
 ```json
 {"ARA_NM":"강원특별자치도 강릉시","AIS_TP_CD_NM":"행복주택",
  "SBD_LGO_NM":"강릉교동 행복주택","SUM_HSH_CNT":"180",
- "DDO_AR":"36.97","HSH_CNT":"72"}
+ "DDO_AR":"36.97","HSH_CNT":"72","LS_GMY":"19546000","RFE":"195460"}
 ```
 
 | 필드 | 뜻 | 도메인 매핑 |
@@ -317,6 +317,8 @@ curl -X POST "localhost:8080/admin/ingest/lease-infos"
 | `SUM_HSH_CNT` | 단지·공급유형 전체 세대수 | `LhLeaseInfo.complexTotalUnitCount`; `HousingComplex.unitCount` 검증 |
 | `DDO_AR` | 전용면적(㎡) | `LhLeaseInfo.exclusiveArea`; UnitType 매칭 |
 | `HSH_CNT` | 전용면적 주택형 전체 세대수 | `LhLeaseInfo.totalUnitCount` → `UnitType.totalUnitCount` |
+| `LS_GMY` | 현재 카탈로그 주택형 임대보증금 | `LhLeaseInfo.deposit` → 확정 `UnitType.baseRentTerms.deposit` |
+| `RFE` | 현재 카탈로그 주택형 월임대료 | `LhLeaseInfo.monthlyRent` → 확정 `UnitType.baseRentTerms.monthlyRent` |
 | `RS_DTTM` | 원천 응답 시각 | `LhLeaseInfoBatch.sourceRespondedAt` |
 
 ### 매칭과 보존 규칙

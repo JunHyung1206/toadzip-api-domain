@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import test.domain.housing.Address;
+import test.domain.housing.BaseRentTerms;
 import test.domain.housing.HousingComplex;
 import test.domain.housing.HousingComplexRepository;
 import test.domain.housing.SupplyType;
@@ -74,7 +75,9 @@ class NoticeHousingUnitTypeMatchServiceTest {
         HousingComplex complex = complexRepository.save(new HousingComplex(
                 "구영주공1단지", address("3171010200100010001"), SourceSystem.MYHOME_PORTAL, "10001",
                 SupplyType.NATIONAL_RENTAL, "국민임대", 235, "LH"));
-        unitTypeRepository.save(new UnitType(complex, "59", new BigDecimal("59.9400"), new BigDecimal("82.1224")));
+        UnitType catalog59 = unitTypeRepository.save(
+                new UnitType(complex, "59", new BigDecimal("59.9400"), new BigDecimal("82.1224")));
+        catalog59.updateBaseRentTerms(new BaseRentTerms(22_000_000L, 180_000L, 5_000_000L));
         unitTypeRepository.save(new UnitType(complex, "33A", new BigDecimal("33.7500"), new BigDecimal("46.0447")));
         unitTypeRepository.save(new UnitType(complex, "33B", new BigDecimal("33.7700"), new BigDecimal("46.1000")));
 
@@ -157,6 +160,11 @@ class NoticeHousingUnitTypeMatchServiceTest {
 
         assertThat(results.get(0).getUnitType().getTypeName()).isEqualTo("59");
         assertThat(results.get(0).getSuppliedUnitCount()).isEqualTo(20);
+        assertThat(results.get(0).getSourceTotalUnitCount()).isEqualTo(235);
+        assertThat(results.get(0).getNoticeRentTerms().getDeposit()).isEqualTo(19_546_000L);
+        assertThat(results.get(0).getNoticeRentTerms().getMonthlyRent()).isEqualTo(195_460L);
+        assertThat(results.get(0).getCatalogRentTerms().getDeposit()).isEqualTo(22_000_000L);
+        assertThat(results.get(0).getCatalogRentTerms().getMonthlyRent()).isEqualTo(180_000L);
         assertThat(results.get(0).getNoticeHousing()).isNotNull();
         assertThat(results.get(1).getCandidateCount()).isEqualTo(2);
         assertThat(results.get(1).getUnitType()).isNull();
@@ -165,6 +173,7 @@ class NoticeHousingUnitTypeMatchServiceTest {
         assertThat(results.get(4).getReason()).contains("주소");
         assertThat(results.get(5).getReason()).contains("단지명");
         assertThat(results.get(5).getNoticeHousing()).isNull();
+        assertThat(results.get(5).getSourceTotalUnitCount()).isEqualTo(30);
 
         // 원문은 매칭 성공 여부와 무관하게 전부 남는다.
         assertThat(results).allSatisfy(row -> {

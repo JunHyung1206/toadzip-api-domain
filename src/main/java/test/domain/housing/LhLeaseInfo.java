@@ -60,6 +60,14 @@ public class LhLeaseInfo {
     @Column(name = "total_unit_count")
     private Integer totalUnitCount;
 
+    /** 원천 LS_GMY. 현재 카탈로그 기준 이 주택형의 임대보증금이다. */
+    @Column(name = "deposit")
+    private Long deposit;
+
+    /** 원천 RFE. 현재 카탈로그 기준 이 주택형의 월임대료다. */
+    @Column(name = "monthly_rent")
+    private Long monthlyRent;
+
     LhLeaseInfo(LhLeaseInfoBatch batch,
                 int displayOrder,
                 String areaName,
@@ -67,7 +75,9 @@ public class LhLeaseInfo {
                 String complexLabel,
                 Integer complexTotalUnitCount,
                 BigDecimal exclusiveArea,
-                Integer totalUnitCount) {
+                Integer totalUnitCount,
+                Long deposit,
+                Long monthlyRent) {
         this.batch = batch;
         this.displayOrder = displayOrder;
         this.areaName = areaName;
@@ -76,5 +86,7 @@ public class LhLeaseInfo {
         this.complexTotalUnitCount = complexTotalUnitCount;
         this.exclusiveArea = exclusiveArea;
         this.totalUnitCount = totalUnitCount;
+        this.deposit = deposit;
+        this.monthlyRent = monthlyRent;
     }
 }
