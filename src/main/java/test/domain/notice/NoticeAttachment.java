@@ -21,16 +21,16 @@ import lombok.NoArgsConstructor;
  * 원천에서 서로 다른 데이터셋으로 오지만 <b>(구분, 파일명, URL) 로 모양이 같고</b>,
  * 둘 다 "이 공고버전에 딸린 파일"이라는 점도 같다. 이미지에만 붙는 단지명이 {@link #complexLabel} 이다.
  *
- * <p><b>공고 보충 스냅샷 소유다.</b> 조감도는 단지의 성질에 가깝지만 LH 가 그걸 공고 단위로 주고,
+ * <p><b>공고 소유다.</b> 조감도는 단지의 성질에 가깝지만 LH 가 그걸 공고 단위로 주고,
  * 우리 단지에 붙이려면 이름으로 매칭해야 한다 — PNU 가 없어서 안전하지 않다.
- * 그래서 원천이 준 그대로 공고의 보충 스냅샷에 달고, 단지명은 {@link #complexLabel} 에 문자열로만 남긴다.
+ * 그래서 원천이 준 그대로 공고에 달고, 단지명은 {@link #complexLabel} 에 문자열로만 남긴다.
  */
 @Entity
 @Table(
         name = "notice_attachment",
         uniqueConstraints = @UniqueConstraint(
                 name = "uk_notice_attachment_order",
-                columnNames = {"lh_notice_supplement_id", "display_order"}
+                columnNames = {"notice_id", "display_order"}
         )
 )
 @Getter
@@ -42,10 +42,10 @@ public class NoticeAttachment {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "lh_notice_supplement_id", nullable = false)
-    private LhNoticeSupplement noticeSupplement;
+    @JoinColumn(name = "notice_id", nullable = false)
+    private Notice notice;
 
-    /** 원천 순서. 원천이 순번을 주지 않아 응답 순서를 쓴다({@link NoticeHousing} 과 같은 이유). */
+    /** 원천 순서. 원천이 순번을 주지 않아 응답 순서를 쓴다({@link NoticeSupply} 와 같은 이유). */
     @Column(name = "display_order", nullable = false)
     private int displayOrder;
 
@@ -65,13 +65,13 @@ public class NoticeAttachment {
     @Column(name = "complex_label", length = 200)
     private String complexLabel;
 
-    NoticeAttachment(LhNoticeSupplement noticeSupplement,
+    NoticeAttachment(Notice notice,
                             int displayOrder,
                             String kind,
                             String name,
                             String url,
                             String complexLabel) {
-        this.noticeSupplement = noticeSupplement;
+        this.notice = notice;
         this.displayOrder = displayOrder;
         this.kind = kind;
         this.name = name;

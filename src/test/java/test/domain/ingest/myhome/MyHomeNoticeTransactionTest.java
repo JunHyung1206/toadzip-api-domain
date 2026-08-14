@@ -10,11 +10,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.PlatformTransactionManager;
 import test.domain.ingest.ConstructionRentalPolicy;
 import test.domain.ingest.IngestReport;
-import test.domain.notice.NoticeHousing;
-import test.domain.notice.NoticeHousingRepository;
-import test.domain.notice.NoticeVersionRepository;
-import test.domain.notice.RecruitmentNoticeRepository;
-import test.domain.source.SourceSystem;
+import test.domain.notice.NoticeRepository;
+import test.domain.notice.NoticeSupply;
+import test.domain.notice.NoticeSupplyRepository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -26,9 +24,7 @@ import static org.mockito.Mockito.when;
 class MyHomeNoticeTransactionTest {
 
     @Autowired
-    private RecruitmentNoticeRepository recruitmentNoticeRepository;
-    @Autowired
-    private NoticeVersionRepository noticeVersionRepository;
+    private NoticeRepository noticeRepository;
     @Autowired
     private PlatformTransactionManager transactionManager;
 
@@ -40,25 +36,23 @@ class MyHomeNoticeTransactionTest {
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     @DisplayName("한 공고의 저장 실패는 그 공고만 롤백하고, 다른 공고 저장은 계속된다")
     void rollsBackOnlyTheFailingNoticeAndContinuesWithTheNext() {
-        NoticeHousingRepository failingNoticeHousingRepository = mock(NoticeHousingRepository.class);
-        when(failingNoticeHousingRepository.save(any(NoticeHousing.class))).thenAnswer(invocation -> {
-            NoticeHousing housing = invocation.getArgument(0);
-            if ("50002".equals(housing.getNoticeVersion().getSourceNoticeId())) {
+        NoticeSupplyRepository failingSupplyRepository = mock(NoticeSupplyRepository.class);
+        when(failingSupplyRepository.save(any(NoticeSupply.class))).thenAnswer(invocation -> {
+            NoticeSupply supply = invocation.getArgument(0);
+            if ("50002".equals(supply.getNotice().getSourceNoticeId())) {
                 throw new IllegalStateException("공급행 저장 실패");
             }
-            return housing;
+            return supply;
         });
         MyHomeNoticeIngestService service = new MyHomeNoticeIngestService(
-                null, recruitmentNoticeRepository, noticeVersionRepository, failingNoticeHousingRepository,
+                null, noticeRepository, failingSupplyRepository,
                 new ConstructionRentalPolicy(), transactionManager);
 
         IngestReport report = service.apply(MyHomeFixtures.itemsForTwoNoticesOneFailing());
 
         assertThat(report.failed()).isOne();
         assertThat(report.created()).isOne();
-        assertThat(noticeVersionRepository.findBySourceSystemAndSourceNoticeId(
-                SourceSystem.MYHOME_PORTAL, "50001")).isPresent();
-        assertThat(noticeVersionRepository.findBySourceSystemAndSourceNoticeId(
-                SourceSystem.MYHOME_PORTAL, "50002")).isEmpty();
+        assertThat(noticeRepository.findBySourceNoticeId("50001")).isPresent();
+        assertThat(noticeRepository.findBySourceNoticeId("50002")).isEmpty();
     }
 }

@@ -8,22 +8,18 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
+import test.domain.housing.Address;
 import test.domain.ingest.ConstructionRentalPolicy;
 import test.domain.ingest.IngestReport;
 import test.domain.ingest.IngestRejectionReason;
 import test.domain.ingest.OpenApiClient;
 import test.domain.ingest.SourceValues;
-import test.domain.notice.NoticeChangeStatus;
-import test.domain.notice.NoticeHousing;
-import test.domain.notice.NoticeHousingRepository;
+import test.domain.notice.Notice;
+import test.domain.notice.NoticeRepository;
 import test.domain.notice.NoticeSnapshot;
-import test.domain.notice.NoticeVersion;
-import test.domain.notice.NoticeVersionRepository;
-import test.domain.notice.RecruitmentNotice;
-import test.domain.notice.RecruitmentNoticeRepository;
+import test.domain.notice.NoticeSupply;
+import test.domain.notice.NoticeSupplyRepository;
 import test.domain.notice.RentTerms;
-import test.domain.notice.SuppliedHousing;
-import test.domain.source.SourceSystem;
 
 import java.time.LocalDate;
 import java.util.ArrayDeque;
@@ -38,21 +34,25 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 15108420 → RecruitmentNotice + NoticeVersion + NoticeHousing 적재.
+ * 15108420 → {@link Notice} + {@link NoticeSupply} 적재.
  *
  * <p>원천 한 행은 공고가 아니라 공급행이다. 같은 pblancId 가 지역별·단지별로 여러 행에 걸쳐 나오고
- * 행마다 sumSuplyCo(공급 수)가 다르다. 그래서 pblancId 로 묶어 공고버전 하나를 만들고 행들을 공급행으로 붙인다.
+ * 행마다 sumSuplyCo(공급 수)가 다르다. 그래서 pblancId 로 묶어 공고 하나를 만들고 행들을 공급행으로 붙인다.
+ *
+ * <p>여기서 만드는 공급행은 <b>단지 단위</b>다. 주택형까지 쪼개는 건 LH 15056765 를 받는
+ * {@link test.domain.ingest.lh.LhNoticeIngestService} 가 하고, LH 원천이 없는 공고(SH·GH)는 이 모습이 최종이다.
  *
  * <p>정정공고는 새 pblancId 로 발급되고 beforePblancId 가 이전 공고를 가리킨다. 실데이터에서
  * beforePblancId 가 자기 pblancId 보다 늘 작다는 보장은 없어서, 숫자 정렬이 아니라 batch 안의
  * 의존관계(누가 누구를 이전 버전으로 가리키는가)를 그래프로 만들어 위상 정렬한다({@link #resolveChainOrder}).
+ * 그래도 batch 를 넘어 원공고가 늦게 오는 경우가 남아서, 저장 뒤에 {@link #rebaseFollowers} 로
+ * 이미 저장된 정정공고들의 뿌리를 옮긴다.
  *
- * <p>단지 카탈로그({@code housing_complex})와의 연결은 이 서비스의 책임이 아니다. 그 매칭은 별도
- * 파생 matcher 가 한다.
+ * <p>단지 카탈로그({@code housing_complex})와의 연결은 이 서비스의 책임이 아니다. 공고와 카탈로그는
+ * 서로 다른 시점에 적재되므로 {@link test.domain.ingest.NoticeSupplyCatalogLinker} 가 따로 채운다.
  */
 @Slf4j
 @Service
@@ -71,22 +71,19 @@ public class MyHomeNoticeIngestService {
     private static final String LIST_POINTER = "/response/body/item";
 
     private final OpenApiClient myhomeApiClient;
-    private final RecruitmentNoticeRepository recruitmentNoticeRepository;
-    private final NoticeVersionRepository noticeVersionRepository;
-    private final NoticeHousingRepository noticeHousingRepository;
+    private final NoticeRepository noticeRepository;
+    private final NoticeSupplyRepository noticeSupplyRepository;
     private final ConstructionRentalPolicy rentalPolicy;
     private final TransactionTemplate transactionTemplate;
 
     public MyHomeNoticeIngestService(@Qualifier("myhomeNoticeApiClient") OpenApiClient myhomeApiClient,
-                                     RecruitmentNoticeRepository recruitmentNoticeRepository,
-                                     NoticeVersionRepository noticeVersionRepository,
-                                     NoticeHousingRepository noticeHousingRepository,
+                                     NoticeRepository noticeRepository,
+                                     NoticeSupplyRepository noticeSupplyRepository,
                                      ConstructionRentalPolicy rentalPolicy,
                                      PlatformTransactionManager transactionManager) {
         this.myhomeApiClient = myhomeApiClient;
-        this.recruitmentNoticeRepository = recruitmentNoticeRepository;
-        this.noticeVersionRepository = noticeVersionRepository;
-        this.noticeHousingRepository = noticeHousingRepository;
+        this.noticeRepository = noticeRepository;
+        this.noticeSupplyRepository = noticeSupplyRepository;
         this.rentalPolicy = rentalPolicy;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -184,7 +181,7 @@ public class MyHomeNoticeIngestService {
         return report;
     }
 
-    private record NoticeHousingKey(String pblancId, Integer houseSn) {
+    private record NoticeSupplyKey(String pblancId, Integer houseSn) {
     }
 
     private record DeduplicatedRows(
@@ -197,10 +194,10 @@ public class MyHomeNoticeIngestService {
      * 모순된 응답을 준 것) 신뢰할 수 없으므로 그 공고 전체를 제외 대상으로 표시한다.
      */
     private DeduplicatedRows deduplicate(List<MyHomeNoticeItem> rows) {
-        Map<NoticeHousingKey, MyHomeNoticeItem> unique = new LinkedHashMap<>();
+        Map<NoticeSupplyKey, MyHomeNoticeItem> unique = new LinkedHashMap<>();
         Set<String> conflictedNoticeIds = new HashSet<>();
         for (MyHomeNoticeItem row : rows) {
-            NoticeHousingKey key = new NoticeHousingKey(
+            NoticeSupplyKey key = new NoticeSupplyKey(
                     SourceValues.trimToNull(row.pblancId()), row.houseSn());
             MyHomeNoticeItem previous = unique.putIfAbsent(key, row);
             if (previous != null && !previous.equals(row) && key.pblancId() != null) {
@@ -333,15 +330,14 @@ public class MyHomeNoticeIngestService {
         }
         MyHomeNoticeItem validHead = validRows.get(0);
 
-        Optional<NoticeVersion> alreadyStored = noticeVersionRepository
-                .findBySourceSystemAndSourceNoticeId(SourceSystem.MYHOME_PORTAL, pblancId);
+        Optional<Notice> alreadyStored = noticeRepository.findBySourceNoticeId(pblancId);
         if (alreadyStored.isPresent()) {
-            NoticeVersion existing = alreadyStored.get();
+            Notice existing = alreadyStored.get();
             boolean sameContent = existing.hasSameContentAs(snapshotOf(validHead))
-                    && hasSameHousingContent(existing, validRows);
+                    && hasSameSupplyContent(existing, validRows);
             if (!sameContent) {
                 // 마이홈은 정정 때 새 pblancId 를 발급한다. 그런데도 같은 pblancId 의 내용이 달라졌다면
-                // 원천이 제자리에서 고친 것이라 신뢰할 수 없다. 기존 aggregate 는 그대로 두고 이 요청만 제외한다.
+                // 원천이 제자리에서 고친 것이라 신뢰할 수 없다. 기존 공고는 그대로 두고 이 요청만 제외한다.
                 log.warn("공고 {}의 내용이 같은 pblancId 로 바뀌었습니다. 기존 내용을 유지하고 이 요청은 제외합니다.",
                         pblancId);
                 return IngestReport.oneRejected(IngestRejectionReason.INVALID_SOURCE_ROW).plus(rejectedRows);
@@ -350,14 +346,14 @@ public class MyHomeNoticeIngestService {
         }
 
         String beforeId = SourceValues.trimToNull(validHead.beforePblancId());
-        Optional<NoticeVersion> previous = findPrevious(validHead, beforeId);
-        NoticeVersion version = previous
+        Optional<Notice> previous = findPrevious(validHead, beforeId);
+        Notice notice = previous
                 .map(prior -> prior.nextVersion(pblancId, beforeId, snapshotOf(validHead)))
-                .orElseGet(() -> NoticeVersion.firstVersion(
-                        resolveRoot(pblancId), pblancId, beforeId, snapshotOf(validHead)));
+                .orElseGet(() -> Notice.firstVersion(pblancId, beforeId, snapshotOf(validHead)));
 
-        noticeVersionRepository.save(version);
-        saveNoticeHousing(version, validRows);
+        noticeRepository.save(notice);
+        saveSupplies(notice, validRows);
+        rebaseFollowers(notice);
 
         IngestReport stored = previous.isPresent()
                 ? IngestReport.oneVersioned()
@@ -365,66 +361,83 @@ public class MyHomeNoticeIngestService {
         return stored.plus(rejectedRows);
     }
 
-    /** NoticeHousing 의 필수 조건은 이 둘뿐이다. PNU·주소·단지명 누락은 행을 버릴 이유가 아니며,
-     * 붙을 단지를 못 찾았다는 사실은 이후 matcher 가 UNMATCHED 로 남긴다. */
+    /** 공급행의 필수 조건은 이 둘뿐이다. PNU·주소·단지명 누락은 행을 버릴 이유가 아니다. */
     private boolean validSupplyLine(MyHomeNoticeItem row) {
         return row.houseSn() != null && row.houseSn() > 0;
     }
 
     /**
      * 같은 pblancId 를 다시 읽었을 때 저장된 공급행 집합·내용까지 완전히 같은지 본다.
-     * houseSn 집합이 다르거나 한 공급행이라도 내용이 다르면 재수집을 신뢰할 수 없다는 뜻이라 false 를 반환한다.
+     *
+     * <p>저장된 행은 LH 적재가 주택형 단위로 쪼갠 뒤일 수 있어 마이홈 행과 1:1 이 아니다. 그래서
+     * houseSn 으로 묶어 비교한다 — 같은 houseSn 행들은 마이홈 쪽 값이 전부 같은 복사본이라
+     * 그중 아무 행이나 하나만 보면 된다. houseSn 이 없는 행은 마이홈에 짝이 없던 LH 행이라 비교 대상이 아니다.
      */
-    private boolean hasSameHousingContent(NoticeVersion existing, List<MyHomeNoticeItem> validRows) {
-        List<NoticeHousing> stored = noticeHousingRepository.findByNoticeVersionOrderByDisplayOrder(existing);
-        Set<Integer> storedHouseSns = stored.stream()
-                .map(NoticeHousing::getHouseSn)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+    private boolean hasSameSupplyContent(Notice existing, List<MyHomeNoticeItem> validRows) {
+        Map<Integer, NoticeSupply> storedByHouseSn = noticeSupplyRepository
+                .findByNoticeOrderByDisplayOrder(existing).stream()
+                .filter(supply -> supply.getHouseSn() != null)
+                .collect(Collectors.toMap(NoticeSupply::getHouseSn, supply -> supply,
+                        (first, second) -> first, LinkedHashMap::new));
         Set<Integer> incomingHouseSns = validRows.stream()
                 .map(MyHomeNoticeItem::houseSn)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
-        if (!storedHouseSns.equals(incomingHouseSns)) {
+        if (!storedByHouseSn.keySet().equals(incomingHouseSns)) {
             return false;
         }
-        Map<Integer, NoticeHousing> byHouseSn = stored.stream()
-                .collect(Collectors.toMap(NoticeHousing::getHouseSn, Function.identity()));
         for (MyHomeNoticeItem row : validRows) {
-            NoticeHousing storedHousing = byHouseSn.get(row.houseSn());
-            boolean same = storedHousing != null && storedHousing.hasSameSourceContentAs(
-                    row.houseSn(), row.sumSuplyCo(), suppliedHousingOf(row), rentTermsOf(row),
-                    SourceValues.trimToNull(row.pcUrl()), SourceValues.trimToNull(row.mobileUrl()));
-            if (!same) {
+            if (!sameComplexValues(storedByHouseSn.get(row.houseSn()), row)) {
                 return false;
             }
         }
         return true;
     }
 
-    private Optional<NoticeVersion> findPrevious(MyHomeNoticeItem head, String beforeId) {
+    private boolean sameComplexValues(NoticeSupply stored, MyHomeNoticeItem row) {
+        return stored != null
+                && Objects.equals(stored.getComplexSupplyCount(), row.sumSuplyCo())
+                && Objects.equals(stored.getComplexName(), SourceValues.trimToNull(row.hsmpNm()))
+                && Objects.equals(stored.getSuppliedPnu(), Address.normalizePnu(row.pnu()))
+                && Objects.equals(stored.getSuppliedAddress(), SourceValues.trimToNull(row.fullAdres()))
+                && Objects.equals(stored.getComplexTotalUnitCount(), SourceValues.toInt(row.totHshldCo()))
+                && RentTerms.sameValues(stored.getRentTerms(), rentTermsOf(row))
+                && Objects.equals(stored.getDetailUrl(), SourceValues.trimToNull(row.pcUrl()))
+                && Objects.equals(stored.getMobileDetailUrl(), SourceValues.trimToNull(row.mobileUrl()));
+    }
+
+    private Optional<Notice> findPrevious(MyHomeNoticeItem head, String beforeId) {
         if (beforeId == null) {
             return Optional.empty();
         }
-        Optional<NoticeVersion> previous = noticeVersionRepository
-                .findBySourceSystemAndSourceNoticeId(SourceSystem.MYHOME_PORTAL, beforeId);
+        Optional<Notice> previous = noticeRepository.findBySourceNoticeId(beforeId);
         if (previous.isEmpty()) {
             log.warn("정정공고 {}의 이전 공고 {}를 못 찾아 새 체인으로 시작합니다.", head.pblancId(), beforeId);
         }
         return previous;
     }
 
-    /** 체인이 처음이거나 끊겼을 때 이 pblancId 를 루트로 하는 공고를 찾거나 새로 만든다. */
-    private RecruitmentNotice resolveRoot(String pblancId) {
-        return recruitmentNoticeRepository
-                .findBySourceSystemAndSourceRootNoticeId(SourceSystem.MYHOME_PORTAL, pblancId)
-                .orElseGet(() -> recruitmentNoticeRepository.save(
-                        new RecruitmentNotice(SourceSystem.MYHOME_PORTAL, pblancId)));
+    /**
+     * 이 공고를 이전 버전으로 가리키면서 이미 저장돼 있던 정정공고들을 이 아래로 옮긴다.
+     * 정정공고가 원공고보다 먼저 들어온 경우인데, 옮기면 뿌리와 순번이 바뀌므로 그 뒷 버전들도 따라간다.
+     */
+    private void rebaseFollowers(Notice notice) {
+        for (Notice follower : noticeRepository.findByBeforeSourceNoticeId(notice.getSourceNoticeId())) {
+            if (Objects.equals(follower.getId(), notice.getId())) {
+                continue;
+            }
+            log.info("뒤늦게 들어온 원공고 {} 아래로 정정공고 {}를 옮깁니다.",
+                    notice.getSourceNoticeId(), follower.getSourceNoticeId());
+            follower.rebaseOnto(notice);
+            noticeRepository.save(follower);
+            rebaseFollowers(follower);
+        }
     }
 
     /** 공고 단위 값만 담는다. pcUrl 은 행마다 달라서(houseSn 이 붙는다) 여기 쓰면 안 되고 url 을 쓴다. */
     private NoticeSnapshot snapshotOf(MyHomeNoticeItem item) {
         LocalDate publishedOn = SourceValues.toDate(item.rcritPblancDe());
         return new NoticeSnapshot(
-                NoticeChangeStatus.fromStatusName(item.sttusNm()),
+                SourceValues.trimToNull(item.sttusNm()),
                 publishedOn == null ? null : publishedOn.atStartOfDay(),
                 SourceValues.trimToNull(item.pblancNm()),
                 SourceValues.trimToNull(item.url()),
@@ -437,34 +450,23 @@ public class MyHomeNoticeIngestService {
                 SourceValues.trimToNull(item.refrnc()));
     }
 
-    private void saveNoticeHousing(NoticeVersion version, List<MyHomeNoticeItem> rows) {
+    private void saveSupplies(Notice notice, List<MyHomeNoticeItem> rows) {
         for (int order = 0; order < rows.size(); order++) {
             MyHomeNoticeItem row = rows.get(order);
-            noticeHousingRepository.save(new NoticeHousing(
-                    version,
+            noticeSupplyRepository.save(NoticeSupply.ofComplex(
+                    notice,
                     order,
                     row.houseSn(),
+                    SourceValues.trimToNull(row.hsmpNm()),
+                    Address.normalizePnu(row.pnu()),
+                    SourceValues.trimToNull(row.fullAdres()),
                     row.sumSuplyCo(),
-                    suppliedHousingOf(row),
+                    SourceValues.toInt(row.totHshldCo()),
                     rentTermsOf(row),
                     SourceValues.trimToNull(row.pcUrl()),
                     SourceValues.trimToNull(row.mobileUrl())));
         }
-        log.debug("공고 {} 공급행 {}건 저장", version.getSourceNoticeId(), rows.size());
-    }
-
-    /** 단지에 붙든 안 붙든 공고가 그때 뭐라고 했는지는 그대로 남긴다. */
-    private SuppliedHousing suppliedHousingOf(MyHomeNoticeItem row) {
-        return new SuppliedHousing(
-                SourceValues.trimToNull(row.hsmpNm()),
-                SourceValues.trimToNull(row.fullAdres()),
-                SourceValues.trimToNull(row.pnu()),
-                SourceValues.trimToNull(row.rnCodeNm()),
-                SourceValues.trimToNull(row.refrnLegaldongNm()),
-                SourceValues.trimToNull(row.brtcNm()),
-                SourceValues.trimToNull(row.signguNm()),
-                SourceValues.trimToNull(row.heatMthdNm()),
-                SourceValues.toInt(row.totHshldCo()));
+        log.debug("공고 {} 공급행 {}건 저장", notice.getSourceNoticeId(), rows.size());
     }
 
     private RentTerms rentTermsOf(MyHomeNoticeItem row) {

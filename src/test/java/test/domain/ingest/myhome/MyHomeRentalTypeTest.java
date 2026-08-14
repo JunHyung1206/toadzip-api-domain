@@ -1,7 +1,6 @@
 package test.domain.ingest.myhome;
 
 import org.junit.jupiter.api.Test;
-import test.domain.housing.SupplyType;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -18,8 +17,8 @@ class MyHomeRentalTypeTest {
     void mapsTrimmedConstructionRentalLabelsOnly() {
         assertThat(MyHomeRentalType.fromResponseLabel("  행복주택  "))
                 .contains(MyHomeRentalType.HAPPY_HOUSE);
-        assertThat(MyHomeRentalType.fromResponseLabel("행복주택").map(MyHomeRentalType::supplyType))
-                .contains(SupplyType.HAPPY_HOUSE);
+        assertThat(MyHomeRentalType.fromResponseLabel("행복주택").map(MyHomeRentalType::responseLabel))
+                .contains("행복주택");
         assertThat(MyHomeRentalType.fromResponseLabel("매입임대")).isEmpty();
         assertThat(MyHomeRentalType.fromResponseLabel("6년임대")).isEmpty();
     }

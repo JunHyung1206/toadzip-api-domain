@@ -11,11 +11,8 @@ import org.springframework.util.MultiValueMap;
 import test.domain.housing.Address;
 import test.domain.housing.BaseRentTerms;
 import test.domain.housing.CatalogDetails;
-import test.domain.housing.HeatingType;
-import test.domain.housing.HouseType;
 import test.domain.housing.HousingComplex;
 import test.domain.housing.HousingComplexRepository;
-import test.domain.housing.SupplyType;
 import test.domain.housing.UnitType;
 import test.domain.housing.UnitTypeRepository;
 import test.domain.ingest.ConstructionRentalPolicy;
@@ -23,7 +20,6 @@ import test.domain.ingest.IngestReport;
 import test.domain.ingest.IngestRejectionReason;
 import test.domain.ingest.OpenApiClient;
 import test.domain.ingest.SourceValues;
-import test.domain.source.SourceSystem;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -137,9 +133,9 @@ public class MyHomeComplexIngestService {
             } else if (row.hsmpSn() == null) {
                 report = report.plus(IngestReport.oneRejected(IngestRejectionReason.MISSING_IDENTITY));
             } else {
-                SupplyType supplyType = SupplyType.from(row.suplyTyNm());
                 accepted.computeIfAbsent(
-                                new ComplexSupplyKey(String.valueOf(row.hsmpSn()), supplyType),
+                                new ComplexSupplyKey(String.valueOf(row.hsmpSn()),
+                                        SourceValues.trimToNull(row.suplyTyNm())),
                                 key -> new ArrayList<>())
                         .add(row);
             }
@@ -151,7 +147,7 @@ public class MyHomeComplexIngestService {
                 report = report.plus(Objects.requireNonNull(applied));
             } catch (RuntimeException exception) {
                 log.warn("마이홈 단지 aggregate 저장 실패: hsmpSn={}, supplyType={}",
-                        entry.getKey().sourceComplexId(), entry.getKey().supplyType(), exception);
+                        entry.getKey().sourceComplexId(), entry.getKey().supplyTypeName(), exception);
                 report = report.plus(IngestReport.oneFailed());
             }
         }
@@ -171,7 +167,7 @@ public class MyHomeComplexIngestService {
                 rentalPolicy.hasConstructionEvidence(row.houseTyNm(), row.competDe()));
         if (!anyConstructionEvidence) {
             log.debug("단지 전체 제외: hsmpSn={}, supplyType={}, reason={}",
-                    key.sourceComplexId(), key.supplyType(), IngestRejectionReason.NOT_CONSTRUCTION_HOUSING);
+                    key.sourceComplexId(), key.supplyTypeName(), IngestRejectionReason.NOT_CONSTRUCTION_HOUSING);
             return IngestReport.oneRejected(IngestRejectionReason.NOT_CONSTRUCTION_HOUSING);
         }
 
@@ -182,12 +178,12 @@ public class MyHomeComplexIngestService {
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         if (addresses.isEmpty()) {
             log.warn("단지 전체 제외: hsmpSn={}, supplyType={}, reason={}",
-                    key.sourceComplexId(), key.supplyType(), IngestRejectionReason.MISSING_IDENTITY);
+                    key.sourceComplexId(), key.supplyTypeName(), IngestRejectionReason.MISSING_IDENTITY);
             return IngestReport.oneRejected(IngestRejectionReason.MISSING_IDENTITY);
         }
         if (addresses.size() > 1) {
             log.warn("단지 전체 제외: hsmpSn={}, supplyType={}, 도로명주소가 {}개로 갈립니다.",
-                    key.sourceComplexId(), key.supplyType(), addresses.size());
+                    key.sourceComplexId(), key.supplyTypeName(), addresses.size());
             return IngestReport.oneRejected(IngestRejectionReason.INVALID_SOURCE_ROW);
         }
         String roadAddress = addresses.iterator().next();
@@ -198,7 +194,7 @@ public class MyHomeComplexIngestService {
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         if (unitCounts.size() > 1) {
             log.warn("공급유형 단지 제외: hsmpSn={}, supplyType={}, 세대수가 {}개로 갈립니다.",
-                    key.sourceComplexId(), key.supplyType(), unitCounts.size());
+                    key.sourceComplexId(), key.supplyTypeName(), unitCounts.size());
             return IngestReport.oneRejected(IngestRejectionReason.INVALID_SOURCE_ROW);
         }
         Integer unitCount = unitCounts.stream().findFirst().orElse(null);
@@ -209,23 +205,21 @@ public class MyHomeComplexIngestService {
                 .orElseThrow();
         String sourceComplexId = key.sourceComplexId();
         HousingComplex existing = complexRepository
-                .findBySourceSystemAndSourceComplexIdAndSupplyType(
-                        SourceSystem.MYHOME_PORTAL, sourceComplexId, key.supplyType())
+                .findBySourceComplexIdAndSupplyTypeName(sourceComplexId, key.supplyTypeName())
                 .orElse(null);
         boolean isNew = existing == null;
-        HousingComplex complex = isNew ? newComplex(head, sourceComplexId, key.supplyType(), unitCount) : existing;
+        HousingComplex complex = isNew
+                ? newComplex(head, sourceComplexId, key.supplyTypeName(), unitCount)
+                : existing;
 
         boolean complexChanged = complex.updateCatalogDetails(new CatalogDetails(
                 SourceValues.toDate(head.competDe()),
-                HeatingType.from(head.heatMthdDetailNm()),
                 SourceValues.trimToNull(head.heatMthdDetailNm()),
                 head.parkngCo(),
                 SourceValues.trimToNull(head.buldStleNm()),
                 SourceValues.trimToNull(head.elvtrInstlAtNm()),
-                HouseType.from(head.houseTyNm()),
                 SourceValues.trimToNull(head.houseTyNm())));
-        complexChanged |= complex.updateSupplyDetails(
-                SourceValues.trimToNull(head.suplyTyNm()), unitCount, SourceValues.trimToNull(head.insttNm()));
+        complexChanged |= complex.updateSupplyDetails(unitCount, SourceValues.trimToNull(head.insttNm()));
 
         // 트랜잭션 경계가 save() 안에 있어서 더티체킹이 안 돈다. 그래서 바뀐 걸 직접 판단해 저장한다.
         if (isNew || complexChanged) {
@@ -247,7 +241,7 @@ public class MyHomeComplexIngestService {
 
     private HousingComplex newComplex(MyHomeComplexItem item,
                                       String sourceComplexId,
-                                      SupplyType supplyType,
+                                      String supplyTypeName,
                                       Integer unitCount) {
         Address address = new Address(
                 item.rnAdres(),
@@ -259,10 +253,8 @@ public class MyHomeComplexIngestService {
         return new HousingComplex(
                 complexName(item),
                 address,
-                SourceSystem.MYHOME_PORTAL,
                 sourceComplexId,
-                supplyType,
-                SourceValues.trimToNull(item.suplyTyNm()),
+                supplyTypeName,
                 unitCount,
                 SourceValues.trimToNull(item.insttNm()));
     }
@@ -328,6 +320,6 @@ public class MyHomeComplexIngestService {
         return isNew || changed;
     }
 
-    private record ComplexSupplyKey(String sourceComplexId, SupplyType supplyType) {
+    private record ComplexSupplyKey(String sourceComplexId, String supplyTypeName) {
     }
 }

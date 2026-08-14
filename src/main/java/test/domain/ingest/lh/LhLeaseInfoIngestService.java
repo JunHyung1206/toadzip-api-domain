@@ -10,9 +10,6 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import test.domain.housing.Address;
 import test.domain.housing.BaseRentTerms;
-import test.domain.housing.LhLeaseInfo;
-import test.domain.housing.LhLeaseInfoBatch;
-import test.domain.housing.LhLeaseInfoBatchRepository;
 import test.domain.housing.HousingComplex;
 import test.domain.housing.HousingComplexRepository;
 import test.domain.housing.UnitType;
@@ -20,26 +17,30 @@ import test.domain.housing.UnitTypeRepository;
 import test.domain.ingest.IngestReport;
 import test.domain.ingest.OpenApiClient;
 import test.domain.ingest.SourceValues;
-import test.domain.match.LhLeaseInfoUnitTypeMatch;
-import test.domain.match.LhLeaseInfoUnitTypeMatchRepository;
-import test.domain.match.LhLeaseInfoUnitTypeMatchStatus;
-import test.domain.source.SourceSystem;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-import java.time.Clock;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
 /**
- * 15059475 전국 LH 임대단지 주택형 카탈로그를 저장하고, 엄격하게 확인된 행만 {@link UnitType}에 반영한다.
- * 원천에는 PNU가 없으므로 이름이 비슷하다는 이유만으로는 절대 갱신하지 않는다.
+ * 15059475 전국 LH 임대단지 주택형 카탈로그를 읽어 확인된 값만 {@link UnitType} 에 바로 반영한다.
+ *
+ * <p><b>원천행을 저장하지 않는다.</b> 예전에는 {@code lh_lease_info_batch} + {@code lh_lease_info}
+ * (6,710행) + 매칭 결과 테이블에 스냅샷을 남겼는데, 이 원천은 공고와 무관한 전국 카탈로그고
+ * {@code PG_SZ=9999} 한 번이면 전부 받는다. 재적재 비용이 거의 없어서 원천행을 남길 값이
+ * 재호출 비용보다 크지 않았다.
+ *
+ * <p><b>대신 엄격하게 확인된 행만 쓴다.</b> 원천에는 단지 ID 도 PNU 도 주소도 없다. 그래서
+ * 지역·단지명·공급유형·{@code SUM_HSH_CNT} 가 카탈로그 단지 하나로 좁혀지고 {@code DDO_AR} 가
+ * {@link UnitType#getExclusiveArea()} 와 <b>정확히</b> 하나 일치할 때만 반영한다.
+ * 36.97과 36.9700 처럼 소수 자릿수만 다른 값은 같게 보지만 ±0.05㎡ 근사는 쓰지 않는다.
+ * 같은 주택형을 여러 원천행이 가리키면 마지막 값이 앞 값을 덮어쓰지 못하도록 아무것도 반영하지 않는다.
  */
 @Slf4j
 @Service
@@ -47,38 +48,27 @@ public class LhLeaseInfoIngestService {
 
     private static final String PATH = "lhLeaseInfo1/lhLeaseInfo1";
     private static final String LIST_KEY = "dsList";
-    private static final String MATCHER_VERSION = "lh-lease-info-area-v1";
-    private static final DateTimeFormatter RESPONSE_TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     private final OpenApiClient lhApiClient;
     private final ObjectMapper objectMapper;
-    private final LhLeaseInfoBatchRepository batchRepository;
-    private final LhLeaseInfoUnitTypeMatchRepository matchRepository;
     private final HousingComplexRepository complexRepository;
     private final UnitTypeRepository unitTypeRepository;
     private final TransactionTemplate transactionTemplate;
-    private final Clock clock;
 
     public LhLeaseInfoIngestService(@Qualifier("lhApiClient") OpenApiClient lhApiClient,
                                     ObjectMapper objectMapper,
-                                    LhLeaseInfoBatchRepository batchRepository,
-                                    LhLeaseInfoUnitTypeMatchRepository matchRepository,
                                     HousingComplexRepository complexRepository,
                                     UnitTypeRepository unitTypeRepository,
-                                    PlatformTransactionManager transactionManager,
-                                    Clock clock) {
+                                    PlatformTransactionManager transactionManager) {
         this.lhApiClient = lhApiClient;
         this.objectMapper = objectMapper;
-        this.batchRepository = batchRepository;
-        this.matchRepository = matchRepository;
         this.complexRepository = complexRepository;
         this.unitTypeRepository = unitTypeRepository;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        this.clock = clock;
     }
 
-    /** 필터 없이 전 페이지를 읽어 전국 카탈로그의 현재 스냅샷을 교체한다. */
+    /** 필터 없이 전 페이지를 읽어 카탈로그를 갱신한다. */
     public IngestReport ingest(int pageSize, int maxPages) {
         if (pageSize < 1 || maxPages < 1) {
             throw new IllegalArgumentException("pageSize와 maxPages는 1 이상이어야 합니다.");
@@ -103,92 +93,90 @@ public class LhLeaseInfoIngestService {
         }
     }
 
-    /** HTTP 없이 이미 받은 페이지 응답을 현재 스냅샷으로 적용한다. */
+    /**
+     * HTTP 없이 이미 받은 페이지 응답을 반영한다. 부분 응답으로 카탈로그를 훼손하지 않도록,
+     * 전 페이지에 {@code dsList} 키가 있고 행이 하나라도 있을 때만 반영한다.
+     */
     IngestReport apply(List<JsonNode> pages) {
         if (!isCompleteSnapshot(pages)) {
             log.warn("LH 임대주택단지 응답에 유효한 전국 dsList 스냅샷이 없습니다.");
             return IngestReport.oneFailed();
         }
         try {
-            return Objects.requireNonNull(transactionTemplate.execute(status -> saveSnapshot(pages)));
+            return Objects.requireNonNull(transactionTemplate.execute(status -> applyRows(readRows(pages))));
         } catch (RuntimeException e) {
-            log.warn("LH 임대주택단지 스냅샷 저장에 실패했습니다.", e);
+            log.warn("LH 임대주택단지 카탈로그 반영에 실패했습니다.", e);
             return IngestReport.oneFailed();
         }
     }
 
-    private IngestReport saveSnapshot(List<JsonNode> pages) {
-        boolean replacing = batchRepository.count() > 0;
-        matchRepository.deleteAll();
-        matchRepository.flush();
-        batchRepository.deleteAll();
-        batchRepository.flush();
-
+    private IngestReport applyRows(List<LeaseInfoRow> rows) {
+        // 이번 스냅샷이 말하지 않는 주택형은 값을 비운다. 지난 응답의 세대수가 남아 있으면 안 된다.
         unitTypeRepository.findAll().forEach(unitType -> unitType.updateTotalUnitCount(null));
 
-        LhLeaseInfoBatch batch = new LhLeaseInfoBatch(
-                SourceSystem.LH_LEASE_INFO, sourceRespondedAt(pages), LocalDateTime.now(clock));
-        addLeaseInfos(batch, pages);
-        batchRepository.saveAndFlush(batch);
-        match(batch);
-        return replacing ? IngestReport.oneVersioned() : IngestReport.oneCreated();
-    }
-
-    private void addLeaseInfos(LhLeaseInfoBatch batch, List<JsonNode> pages) {
-        int order = 0;
-        for (JsonNode page : pages) {
-            for (JsonNode row : OpenApiClient.findRows(page, LIST_KEY)) {
-                LhLeaseInfoItem item = objectMapper.convertValue(row, LhLeaseInfoItem.class);
-                batch.addLeaseInfo(order++,
-                        SourceValues.trimToNull(item.areaName()),
-                        SourceValues.trimToNull(item.supplyTypeName()),
-                        SourceValues.trimToNull(item.complexLabel()),
-                        SourceValues.toInt(item.complexTotalUnitCount()),
-                        SourceValues.toDecimal(item.exclusiveArea()),
-                        SourceValues.toInt(item.totalUnitCount()),
-                        SourceValues.toLong(item.deposit()),
-                        SourceValues.toLong(item.monthlyRent()));
-            }
-        }
-    }
-
-    private void match(LhLeaseInfoBatch batch) {
         Map<CatalogKey, List<HousingComplex>> complexes = complexesByKey();
-        LocalDateTime now = LocalDateTime.now(clock);
-        List<MatchDecision> decisions = batch.getLeaseInfos().stream()
-                .map(leaseInfo -> evaluate(leaseInfo, complexes, now))
-                .toList();
-        Map<Long, Integer> sourceRowsByUnitType = new HashMap<>();
-        for (MatchDecision decision : decisions) {
-            if (decision.status() == LhLeaseInfoUnitTypeMatchStatus.MATCHED) {
-                sourceRowsByUnitType.merge(decision.unitType().getId(), 1, Integer::sum);
+        Map<Long, List<LeaseInfoRow>> rowsByUnitType = new LinkedHashMap<>();
+        for (LeaseInfoRow row : rows) {
+            UnitType unitType = resolve(row, complexes);
+            if (unitType != null) {
+                rowsByUnitType.computeIfAbsent(unitType.getId(), key -> new ArrayList<>()).add(row);
             }
         }
 
-        for (MatchDecision decision : decisions) {
-            if (decision.status() == LhLeaseInfoUnitTypeMatchStatus.MATCHED
-                    && sourceRowsByUnitType.get(decision.unitType().getId()) > 1) {
-                decision = decision.competingSourceRows(sourceRowsByUnitType.get(decision.unitType().getId()));
+        int applied = 0;
+        int ambiguous = 0;
+        for (Map.Entry<Long, List<LeaseInfoRow>> entry : rowsByUnitType.entrySet()) {
+            if (entry.getValue().size() > 1) {
+                ambiguous++;
+                continue;
             }
-            if (decision.status() == LhLeaseInfoUnitTypeMatchStatus.MATCHED) {
-                decision.unitType().updateTotalUnitCount(decision.leaseInfo().getTotalUnitCount());
-                updateBaseRentTerms(decision.unitType(), decision.leaseInfo());
-            }
-            matchRepository.save(result(decision));
+            UnitType unitType = unitTypeRepository.findById(entry.getKey()).orElseThrow();
+            LeaseInfoRow row = entry.getValue().get(0);
+            unitType.updateTotalUnitCount(row.totalUnitCount());
+            updateBaseRentTerms(unitType, row);
+            applied++;
         }
+        log.info("15059475 반영: 원천 {}행 중 주택형 {}건 갱신, 원천행 중복으로 보류 {}건",
+                rows.size(), applied, ambiguous);
+        return IngestReport.oneVersioned();
     }
 
-    private void updateBaseRentTerms(UnitType unitType, LhLeaseInfo leaseInfo) {
-        if (leaseInfo.getDeposit() == null && leaseInfo.getMonthlyRent() == null) {
+    /** 보증금·월세만 덮어쓴다. 전환보증금 한도는 15059475가 주지 않아 마이홈 값을 유지한다. */
+    private void updateBaseRentTerms(UnitType unitType, LeaseInfoRow row) {
+        if (row.deposit() == null && row.monthlyRent() == null) {
             return;
         }
         BaseRentTerms current = unitType.getBaseRentTerms();
-        Long deposit = leaseInfo.getDeposit() != null
-                ? leaseInfo.getDeposit() : current == null ? null : current.getDeposit();
-        Long monthlyRent = leaseInfo.getMonthlyRent() != null
-                ? leaseInfo.getMonthlyRent() : current == null ? null : current.getMonthlyRent();
+        Long deposit = row.deposit() != null
+                ? row.deposit() : current == null ? null : current.getDeposit();
+        Long monthlyRent = row.monthlyRent() != null
+                ? row.monthlyRent() : current == null ? null : current.getMonthlyRent();
         Long convertibleDepositLimit = current == null ? null : current.getConvertibleDepositLimit();
         unitType.updateBaseRentTerms(new BaseRentTerms(deposit, monthlyRent, convertibleDepositLimit));
+    }
+
+    /**
+     * 한 원천행이 가리키는 카탈로그 주택형. 지역·단지명·공급유형이 단지 하나로 좁혀지고,
+     * {@code SUM_HSH_CNT} 가 그 단지 세대수와 같고, {@code DDO_AR} 가 주택형 하나와 정확히 같아야 한다.
+     */
+    private UnitType resolve(LeaseInfoRow row, Map<CatalogKey, List<HousingComplex>> complexes) {
+        List<HousingComplex> candidates = complexes.getOrDefault(CatalogKey.from(row), List.of());
+        if (candidates.size() != 1) {
+            return null;
+        }
+        HousingComplex complex = candidates.getFirst();
+        if (row.complexTotalUnitCount() == null
+                || !Objects.equals(row.complexTotalUnitCount(), complex.getUnitCount())) {
+            return null;
+        }
+        if (row.exclusiveArea() == null || row.totalUnitCount() == null) {
+            return null;
+        }
+        List<UnitType> unitTypes = unitTypeRepository.findByHousingComplex(complex).stream()
+                .filter(unitType -> unitType.getExclusiveArea() != null
+                        && unitType.getExclusiveArea().compareTo(row.exclusiveArea()) == 0)
+                .toList();
+        return unitTypes.size() == 1 ? unitTypes.getFirst() : null;
     }
 
     private Map<CatalogKey, List<HousingComplex>> complexesByKey() {
@@ -202,67 +190,29 @@ public class LhLeaseInfoIngestService {
         return complexes;
     }
 
-    private MatchDecision evaluate(LhLeaseInfo leaseInfo,
-                                   Map<CatalogKey, List<HousingComplex>> complexes,
-                                   LocalDateTime now) {
-        List<HousingComplex> complexCandidates = complexes.getOrDefault(CatalogKey.from(leaseInfo), List.of());
-        if (complexCandidates.isEmpty()) {
-            return decision(leaseInfo, null, LhLeaseInfoUnitTypeMatchStatus.UNMATCHED, 0, now,
-                    "지역·단지명·공급유형이 모두 같은 카탈로그 단지가 없음");
+    private List<LeaseInfoRow> readRows(List<JsonNode> pages) {
+        List<LeaseInfoRow> rows = new ArrayList<>();
+        for (JsonNode page : pages) {
+            for (JsonNode row : OpenApiClient.findRows(page, LIST_KEY)) {
+                LhLeaseInfoItem item = objectMapper.convertValue(row, LhLeaseInfoItem.class);
+                rows.add(new LeaseInfoRow(
+                        SourceValues.trimToNull(item.areaName()),
+                        SourceValues.trimToNull(item.complexLabel()),
+                        SourceValues.trimToNull(item.supplyTypeName()),
+                        SourceValues.toInt(item.complexTotalUnitCount()),
+                        SourceValues.toDecimal(item.exclusiveArea()),
+                        SourceValues.toInt(item.totalUnitCount()),
+                        SourceValues.toLong(item.deposit()),
+                        SourceValues.toLong(item.monthlyRent())));
+            }
         }
-        if (complexCandidates.size() > 1) {
-            return decision(leaseInfo, null, LhLeaseInfoUnitTypeMatchStatus.AMBIGUOUS,
-                    complexCandidates.size(), now, "같은 지역·단지명·공급유형 카탈로그 단지가 여러 건");
-        }
-
-        HousingComplex complex = complexCandidates.getFirst();
-        if (leaseInfo.getComplexTotalUnitCount() == null
-                || !Objects.equals(leaseInfo.getComplexTotalUnitCount(), complex.getUnitCount())) {
-            return decision(leaseInfo, null, LhLeaseInfoUnitTypeMatchStatus.CONFLICT_PROGRAM_UNIT_COUNT,
-                    1, now, "SUM_HSH_CNT가 카탈로그 단지·공급유형 총세대수와 다름");
-        }
-        if (leaseInfo.getExclusiveArea() == null || leaseInfo.getTotalUnitCount() == null) {
-            return decision(leaseInfo, null, LhLeaseInfoUnitTypeMatchStatus.UNMATCHED,
-                    0, now, "DDO_AR 또는 HSH_CNT가 없음");
-        }
-
-        List<UnitType> unitTypeCandidates = unitTypeRepository.findByHousingComplex(complex).stream()
-                .filter(unitType -> unitType.getExclusiveArea() != null
-                        && unitType.getExclusiveArea().compareTo(leaseInfo.getExclusiveArea()) == 0)
-                .toList();
-        if (unitTypeCandidates.isEmpty()) {
-            return decision(leaseInfo, null, LhLeaseInfoUnitTypeMatchStatus.UNMATCHED,
-                    0, now, "DDO_AR가 정확히 같은 카탈로그 주택형이 없음");
-        }
-        if (unitTypeCandidates.size() > 1) {
-            return decision(leaseInfo, null, LhLeaseInfoUnitTypeMatchStatus.AMBIGUOUS,
-                    unitTypeCandidates.size(), now, "DDO_AR가 정확히 같은 카탈로그 주택형이 여러 건");
-        }
-
-        UnitType unitType = unitTypeCandidates.getFirst();
-        return decision(leaseInfo, unitType, LhLeaseInfoUnitTypeMatchStatus.MATCHED,
-                1, now, "지역·단지명·공급유형·SUM_HSH_CNT·DDO_AR 유일 일치");
-    }
-
-    private MatchDecision decision(LhLeaseInfo leaseInfo,
-                                   UnitType unitType,
-                                   LhLeaseInfoUnitTypeMatchStatus status,
-                                   int candidateCount,
-                                   LocalDateTime now,
-                                   String reason) {
-        return new MatchDecision(leaseInfo, unitType, status, candidateCount, now, reason);
-    }
-
-    private LhLeaseInfoUnitTypeMatch result(MatchDecision decision) {
-        return new LhLeaseInfoUnitTypeMatch(decision.leaseInfo(), decision.unitType(), decision.status(),
-                decision.candidateCount(), MATCHER_VERSION, decision.evaluatedAt(), decision.reason());
+        return rows;
     }
 
     private boolean isCompleteSnapshot(List<JsonNode> pages) {
         if (pages == null || pages.isEmpty()) {
             return false;
         }
-
         boolean hasRows = false;
         for (JsonNode page : pages) {
             if (!containsDataset(page)) {
@@ -285,47 +235,23 @@ public class LhLeaseInfoIngestService {
         return false;
     }
 
-    private record MatchDecision(LhLeaseInfo leaseInfo,
-                                 UnitType unitType,
-                                 LhLeaseInfoUnitTypeMatchStatus status,
-                                 int candidateCount,
-                                 LocalDateTime evaluatedAt,
-                                 String reason) {
-
-        MatchDecision competingSourceRows(int sourceRowCount) {
-            return new MatchDecision(leaseInfo, null, LhLeaseInfoUnitTypeMatchStatus.AMBIGUOUS, sourceRowCount,
-                    evaluatedAt, "같은 카탈로그 주택형을 가리키는 15059475 원천행이 여러 건");
-        }
+    /** 15059475 원천행. 저장하지 않고 이 적재 안에서만 산다. */
+    private record LeaseInfoRow(String areaName,
+                                String complexLabel,
+                                String supplyTypeName,
+                                Integer complexTotalUnitCount,
+                                BigDecimal exclusiveArea,
+                                Integer totalUnitCount,
+                                Long deposit,
+                                Long monthlyRent) {
     }
 
-    private LocalDateTime sourceRespondedAt(List<JsonNode> pages) {
-        for (int index = pages.size() - 1; index >= 0; index--) {
-            List<JsonNode> headers = OpenApiClient.findRows(pages.get(index), "resHeader");
-            if (headers.isEmpty()) {
-                continue;
-            }
-            String raw = SourceValues.trimToNull(headers.getFirst().path("RS_DTTM").asString(""));
-            if (raw == null) {
-                continue;
-            }
-            try {
-                return LocalDateTime.parse(raw, RESPONSE_TIMESTAMP);
-            } catch (DateTimeParseException e) {
-                log.warn("LH 임대주택단지 응답시각 변환 실패: raw={}", raw);
-            }
-        }
-        return null;
-    }
-
-    /*
-     * 15059475는 단지 ID를 주지 않는다. 그래서 키가 하나의 단지·공급유형, 하나의 정확한 전용면적으로
-     * 좁혀진 원천행만 UnitType에 반영한다.
-     */
+    /** 15059475는 단지 ID를 주지 않는다. 이름·지역·공급유형 셋이 다 있어야 후보로 삼는다. */
     private record CatalogKey(String areaName, String complexLabel, String supplyTypeName) {
 
-        static CatalogKey from(LhLeaseInfo leaseInfo) {
-            return new CatalogKey(normalize(leaseInfo.getAreaName()), normalize(leaseInfo.getComplexLabel()),
-                    normalize(leaseInfo.getSupplyTypeName()));
+        static CatalogKey from(LeaseInfoRow row) {
+            return new CatalogKey(normalize(row.areaName()), normalize(row.complexLabel()),
+                    normalize(row.supplyTypeName()));
         }
 
         static CatalogKey from(HousingComplex complex) {

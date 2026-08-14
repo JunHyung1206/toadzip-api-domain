@@ -65,7 +65,11 @@ public class Address {
         this.districtName = districtName;
     }
 
-    private static String normalizePnu(String raw) {
+    /**
+     * 19자리 숫자만 PNU 로 받는다. 공고 공급행도 같은 규칙으로 걸러야 카탈로그와 비교가 성립한다
+     * ({@code notice_supply.supplied_pnu}).
+     */
+    public static String normalizePnu(String raw) {
         if (raw == null) {
             return null;
         }

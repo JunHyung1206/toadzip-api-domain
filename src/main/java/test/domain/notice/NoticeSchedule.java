@@ -22,7 +22,7 @@ import java.time.LocalDate;
         name = "notice_schedule",
         uniqueConstraints = @UniqueConstraint(
                 name = "uk_notice_schedule_order",
-                columnNames = {"lh_notice_supplement_id", "display_order"})
+                columnNames = {"notice_id", "display_order"})
 )
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -33,8 +33,8 @@ public class NoticeSchedule {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "lh_notice_supplement_id", nullable = false)
-    private LhNoticeSupplement noticeSupplement;
+    @JoinColumn(name = "notice_id", nullable = false)
+    private Notice notice;
 
     @Column(name = "display_order", nullable = false)
     private int displayOrder;
@@ -60,7 +60,7 @@ public class NoticeSchedule {
     @Column(name = "contract_end_on")
     private LocalDate contractEndOn;
 
-    NoticeSchedule(LhNoticeSupplement noticeSupplement,
+    NoticeSchedule(Notice notice,
                    int displayOrder,
                    String complexLabel,
                    String applicationPeriodText,
@@ -69,7 +69,7 @@ public class NoticeSchedule {
                    LocalDate documentSubmissionEndOn,
                    LocalDate contractBeginOn,
                    LocalDate contractEndOn) {
-        this.noticeSupplement = noticeSupplement;
+        this.notice = notice;
         this.displayOrder = displayOrder;
         this.complexLabel = complexLabel;
         this.applicationPeriodText = applicationPeriodText;

@@ -8,19 +8,13 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
-import test.domain.housing.HeatingType;
-import test.domain.housing.HouseType;
 import test.domain.housing.HousingComplex;
 import test.domain.housing.HousingComplexRepository;
-import test.domain.housing.SupplyType;
 import test.domain.housing.UnitType;
 import test.domain.housing.UnitTypeRepository;
 import test.domain.ingest.IngestReport;
 import test.domain.ingest.IngestRejectionReason;
 import test.domain.ingest.ConstructionRentalPolicy;
-import test.domain.match.LhLeaseInfoUnitTypeMatchRepository;
-import test.domain.match.NoticeHousingCatalogMatchRepository;
-import test.domain.match.NoticeHousingUnitTypeMatchRepository;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -43,12 +37,6 @@ class MyHomeComplexIngestServiceTest {
     @Autowired
     private UnitTypeRepository unitTypeRepository;
     @Autowired
-    private LhLeaseInfoUnitTypeMatchRepository lhLeaseInfoMatchRepository;
-    @Autowired
-    private NoticeHousingCatalogMatchRepository catalogMatchRepository;
-    @Autowired
-    private NoticeHousingUnitTypeMatchRepository unitTypeMatchRepository;
-    @Autowired
     private PlatformTransactionManager transactionManager;
 
     private MyHomeComplexIngestService service;
@@ -58,9 +46,6 @@ class MyHomeComplexIngestServiceTest {
         TransactionTemplate cleanup = new TransactionTemplate(transactionManager);
         cleanup.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         cleanup.executeWithoutResult(status -> {
-            unitTypeMatchRepository.deleteAll();
-            lhLeaseInfoMatchRepository.deleteAll();
-            catalogMatchRepository.deleteAll();
             unitTypeRepository.deleteAll();
             complexRepository.deleteAll();
         });
@@ -112,7 +97,7 @@ class MyHomeComplexIngestServiceTest {
         assertThat(report.rejected()).isZero();
         HousingComplex complex = complexRepository.findAll().get(0);
         assertThat(complex.getName()).isEqualTo("만부마을 행복주택");
-        assertThat(complex.getHouseType()).isEqualTo(HouseType.MULTIPLEX_HOUSE);
+        assertThat(complex.getHouseTypeName()).isEqualTo("다세대주택");
         assertThat(complex.getCompletionDate()).isEqualTo(LocalDate.of(2020, 12, 30));
         assertThat(unitTypeRepository.count()).isEqualTo(2);
     }
@@ -149,8 +134,8 @@ class MyHomeComplexIngestServiceTest {
         assertThat(sameName).hasSize(2);
         assertThat(sameName).extracting(UnitType::getExclusiveArea)
                 .allSatisfy(area -> assertThat(area).isEqualByComparingTo(new BigDecimal("49.90")));
-        assertThat(sameName).extracting(unitType -> unitType.getHousingComplex().getSupplyType())
-                .containsExactlyInAnyOrder(SupplyType.NATIONAL_RENTAL, SupplyType.LONG_TERM_JEONSE);
+        assertThat(sameName).extracting(unitType -> unitType.getHousingComplex().getSupplyTypeName())
+                .containsExactlyInAnyOrder("국민임대", "장기전세");
         // 장기전세는 보증금만 있고 월세가 0이다.
         assertThat(sameName).extracting(unitType -> unitType.getBaseRentTerms().getDeposit())
                 .containsExactlyInAnyOrder(63_850_000L, 311_220_000L);
@@ -178,12 +163,11 @@ class MyHomeComplexIngestServiceTest {
         HousingComplex complex = complexRepository.findAll().get(0);
         assertThat(complex.getCompletionDate()).isEqualTo(LocalDate.of(2016, 1, 17));
         assertThat(complex.getCompletionYear()).isEqualTo(2016);
-        assertThat(complex.getHeatingType()).isEqualTo(HeatingType.DISTRICT);
         assertThat(complex.getHeatingTypeName()).isEqualTo("지역난방");
         assertThat(complex.getCorridorType()).isEqualTo("혼합식");
         assertThat(complex.getElevatorInstallation()).isEqualTo("전체동 설치");
         assertThat(complex.getParkingSpaces()).isEqualTo(472);
-        assertThat(complex.getHouseType()).isEqualTo(HouseType.APARTMENT);
+        assertThat(complex.getHouseTypeName()).isEqualTo("아파트");
         assertThat(complex.getSupplyInstitutionName()).isEqualTo("SH공사");
     }
 
@@ -199,24 +183,16 @@ class MyHomeComplexIngestServiceTest {
     }
 
     @Test
-    @DisplayName("난방유형은 열원까지 붙은 값도 읽는다")
-    void mapsHeatingLabelsWithFuelSuffix() {
-        assertThat(HeatingType.from("지역폐열난방")).isEqualTo(HeatingType.DISTRICT);
-        assertThat(HeatingType.from("개별가스난방")).isEqualTo(HeatingType.INDIVIDUAL);
-        assertThat(HeatingType.from("중앙난방")).isEqualTo(HeatingType.CENTRAL);
-        assertThat(HeatingType.from("")).isNull();
-    }
+    @DisplayName("같은 hsmpSn이라도 공급유형이 다르면 별도 단지 행이라, 자연키가 한글 공급유형명이다")
+    void keepsSupplyTypeNameAsPartOfTheNaturalKey() {
+        service.apply(MyHomeFixtures.constructedComplexItems());
 
-    @Test
-    @DisplayName("모르는 공급유형·주택유형이 와도 적재는 죽지 않고 원문이 남는다")
-    void keepsRawLabelWhenEnumDoesNotMatch() {
-        assertThat(SupplyType.from("청년안심주택")).isNull();
-        assertThat(HouseType.from("생활숙박시설")).isNull();
-        assertThat(SupplyType.from("행복주택")).isEqualTo(SupplyType.HAPPY_HOUSE);
-        assertThat(HouseType.from("다세대주택")).isEqualTo(HouseType.MULTIPLEX_HOUSE);
-        assertThat(SupplyType.NATIONAL_RENTAL.isConstructionRental()).isTrue();
-        assertThat(SupplyType.PURCHASED_RENTAL.isConstructionRental()).isFalse();
-        assertThat(SupplyType.JEONSE_RENTAL.isConstructionRental()).isFalse();
+        assertThat(complexRepository.findAll()).extracting(HousingComplex::getSupplyTypeName)
+                .containsExactlyInAnyOrder("국민임대", "장기전세");
+        assertThat(complexRepository.findBySourceComplexIdAndSupplyTypeName("30965288", "국민임대"))
+                .isPresent();
+        assertThat(complexRepository.findBySourceComplexIdAndSupplyTypeName("30965288", "매입임대"))
+                .isEmpty();
     }
 
     @Test

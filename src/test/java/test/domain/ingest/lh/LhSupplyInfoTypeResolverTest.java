@@ -3,7 +3,6 @@ package test.domain.ingest.lh;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-import test.domain.housing.SupplyType;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -14,28 +13,39 @@ class LhSupplyInfoTypeResolverTest {
 
     @ParameterizedTest
     @CsvSource({
-            "FIVE_YEAR_RENTAL,060",
-            "TEN_YEAR_RENTAL,060",
-            "FIFTY_YEAR_RENTAL,061",
-            "NATIONAL_RENTAL,062",
-            "PERMANENT_RENTAL,062",
-            "LONG_TERM_JEONSE,062",
-            "HAPPY_HOUSE,063"
+            "5년임대,060",
+            "10년임대,060",
+            "50년임대,061",
+            "국민임대,062",
+            "영구임대,062",
+            "장기전세,062",
+            "행복주택,063"
     })
-    void resolvesOfficialSupplyInfoType(SupplyType supplyType, String expected) {
-        assertThat(resolver.resolve(supplyType)).contains(expected);
+    void resolvesOfficialSupplyInfoType(String supplyTypeName, String expected) {
+        assertThat(resolver.resolve(supplyTypeName)).contains(expected);
+    }
+
+    @Test
+    void trimsSourceLabelBeforeLookup() {
+        assertThat(resolver.resolve("  행복주택  ")).contains("063");
     }
 
     @Test
     void defersIntegratedPublicRentalSupplement() {
-        assertThat(resolver.resolve(SupplyType.INTEGRATED_PUBLIC_RENTAL)).isEmpty();
+        assertThat(resolver.resolve("통합공공임대")).isEmpty();
+    }
+
+    @Test
+    void hasNoCodeForUnknownOrMissingSupplyType() {
+        assertThat(resolver.resolve(null)).isEmpty();
+        assertThat(resolver.resolve("청년안심주택")).isEmpty();
     }
 
     @Test
     void rejectsNonConstructionRentalSupplyTypes() {
-        assertThatThrownBy(() -> resolver.resolve(SupplyType.PURCHASED_RENTAL))
+        assertThatThrownBy(() -> resolver.resolve("매입임대"))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> resolver.resolve(SupplyType.JEONSE_RENTAL))
+        assertThatThrownBy(() -> resolver.resolve("전세임대"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

@@ -15,10 +15,10 @@
 | API ID | 이름 | 고정 경로 | 응답 행의 알갱이 | 주로 받는 정보 | 주요 저장 테이블 |
 | --- | --- | --- | --- | --- | --- |
 | 15110581 | 마이홈 공공임대주택 단지정보 | `HWSPR04/rentalHouseGwList` | 단지 × 공급유형 × 주택형 | 단지, 주소, PNU, 주택형, 기준 임대조건 | `housing_complex`, `unit_type` |
-| 15108420 | 마이홈 공공주택 모집공고 | `HWSPR02/rsdtRcritNtcList` | 공고버전 × 공급행 | 공고 이력, 정정 체인, 공급 대상, 공고 임대조건 | `recruitment_notice`, `notice_version`, `notice_housing` |
-| 15057999 | LH 분양임대공고별 상세정보 | `lhLeaseNoticeDtlInfo1/getLeaseNoticeDtlInfo1` | 공고버전 한 건 아래 여러 데이터셋 | 정정사유, 일정, 접수처, 단지 상세, 첨부 | `lh_notice_supplement`와 네 자식 테이블 |
-| 15056765 | LH 분양임대공고별 공급정보 | `lhLeaseNoticeSplInfo1/getLeaseNoticeSplInfo1` | 공고버전 × 단지 × 주택형 | 주택형별 전체·금회 공급 세대수 | `lh_unit_supply_batch`, `lh_unit_supply` |
-| 15059475 | LH 임대주택 단지별 면적·세대수 카탈로그 | `lhLeaseInfo1/lhLeaseInfo1` | 지역 × 공급유형 × 단지 × 전용면적 | 단지·주택형별 전체 세대수 | `lh_lease_info_batch`, `lh_lease_info`, `lh_lease_info_unit_type_match`, `unit_type` |
+| 15108420 | 마이홈 공공주택 모집공고 | `HWSPR02/rsdtRcritNtcList` | 공고 × 공급행 | 공고 이력, 정정 체인, 공급 대상, 공고 임대조건 | `notice`, `notice_supply` |
+| 15057999 | LH 분양임대공고별 상세정보 | `lhLeaseNoticeDtlInfo1/getLeaseNoticeDtlInfo1` | 공고 한 건 아래 여러 데이터셋 | 정정사유, 일정, 접수처, 단지 상세, 첨부 | `notice`, `notice_schedule`, `reception_place`, `notice_attachment`, `notice_supply` |
+| 15056765 | LH 분양임대공고별 공급정보 | `lhLeaseNoticeSplInfo1/getLeaseNoticeSplInfo1` | 공고 × 단지 × 주택형 | 주택형별 전체·금회 공급 세대수 | `notice_supply` |
+| 15059475 | LH 임대주택 단지별 면적·세대수 카탈로그 | `lhLeaseInfo1/lhLeaseInfo1` | 지역 × 공급유형 × 단지 × 전용면적 | 단지·주택형별 전체 세대수·임대조건 | `unit_type` (원천행은 저장하지 않는다) |
 
 API가 다섯 개인데 정보 종류가 더 많아 보이는 이유는 15057999 때문이다.
 이 API 한 번의 응답에 일정, 접수처, 단지 상세, 공고 첨부, 단지 이미지가
@@ -203,37 +203,37 @@ GET /1613000/HWSPR02/rsdtRcritNtcList
 
 | 필드 | 의미 | 저장 위치/처리 |
 | --- | --- | --- |
-| `pblancId` | 공고버전 ID | `notice_version.source_notice_id`; 첫 버전이면 루트도 생성 |
-| `sttusNm` | 일반/정정/취소 상태명 | `notice_version.change_status` |
-| `pblancNm` | 공고명 | `notice_version.title` |
-| `suplyInsttNm` | 공급기관명 | `notice_version.supply_institution_name` |
-| `houseTyNm` | 주택유형명 | `notice_version.house_type_name/house_type` |
-| `suplyTyNm` | 공급유형명 | `notice_version.supply_type_name/supply_type` |
-| `beforePblancId` | 바로 이전 공고 ID | `notice_version.before_source_notice_id`와 이전 버전 연결 |
-| `rcritPblancDe` | 모집공고일 | `notice_version.published_at` |
-| `przwnerPresnatnDe` | 당첨자 발표일 | `notice_version.winner_announced_on` |
-| `beginDe` / `endDe` | 신청 시작일/종료일 | `notice_version.application_begin_on/application_end_on` |
-| `refrnc` | 문의처 | `notice_version.contact` |
-| `url` | 공고 원문 상세 URL | `notice_version.detail_url`; LH 요청 파라미터의 출발점 |
+| `pblancId` | 공고 ID | `notice.source_notice_id`; 첫 버전이면 자기 자신이 체인 뿌리 |
+| `sttusNm` | 일반/정정/취소 상태명 | `notice.notice_change_status_name` 원문 |
+| `pblancNm` | 공고명 | `notice.title` |
+| `suplyInsttNm` | 공급기관명 | `notice.supply_institution_name` |
+| `houseTyNm` | 주택유형명 | `notice.house_type_name` 원문 |
+| `suplyTyNm` | 공급유형명 | `notice.supply_type_name` 원문; LH 호출 코드도 여기서 정한다 |
+| `beforePblancId` | 바로 이전 공고 ID | `notice.before_source_notice_id` 원문 + `supersedes_notice_id`·`root_source_notice_id` |
+| `rcritPblancDe` | 모집공고일 | `notice.published_at` |
+| `przwnerPresnatnDe` | 당첨자 발표일 | `notice.winner_announced_on` |
+| `beginDe` / `endDe` | 신청 시작일/종료일 | `notice.application_begin_on/application_end_on` |
+| `refrnc` | 문의처 | `notice.contact` |
+| `url` | 공고 원문 상세 URL | `notice.detail_url`; LH 요청 파라미터의 출발점 |
 
 ### 4.4 공급행 필드
 
 | 필드 | 의미 | 저장 위치/처리 |
 | --- | --- | --- |
-| `houseSn` | 공고 안 공급행 일련번호 | `notice_housing.house_sn` |
-| `pcUrl` / `mobileUrl` | PC/모바일 행별 상세 URL | `notice_housing.detail_url/mobile_detail_url` |
-| `hsmpNm` | 공고가 적은 단지명 | `notice_housing.supplied_complex_name` |
-| `brtcNm` / `signguNm` | 광역시도/시군구명 | `notice_housing.supplied_province_name/district_name` |
-| `fullAdres` | 공고가 적은 전체 주소 | `notice_housing.supplied_full_address` |
-| `rnCodeNm` | 도로명 | `notice_housing.supplied_road_name` |
-| `refrnLegaldongNm` | 참고 법정동명 | `notice_housing.supplied_reference_legal_dong_name` |
-| `pnu` | 필지고유번호 | `notice_housing.supplied_pnu`; 카탈로그 연결 키 |
-| `heatMthdNm` | 난방방식 원문 | `notice_housing.supplied_heating_type_name` |
-| `totHshldCo` | 대상 주택 전체 세대수 | 숫자로 변환해 `notice_housing.supplied_total_unit_count` |
-| `sumSuplyCo` | 이번 공고 공급 수 | `notice_housing.supply_count` |
-| `rentGtn` | 임대보증금 | `notice_housing.deposit` |
-| `enty` / `surlus` | 계약금/잔금 | `notice_housing.down_payment/balance` |
-| `mtRntchrg` | 월임대료 | `notice_housing.monthly_rent` |
+| `houseSn` | 공고 안 공급행 일련번호 | `notice_supply.house_sn`; 같은 단지 행을 묶는 키 |
+| `pcUrl` / `mobileUrl` | PC/모바일 행별 상세 URL | `notice_supply.detail_url/mobile_detail_url` |
+| `hsmpNm` | 공고가 적은 단지명 | `notice_supply.complex_name` |
+| `brtcNm` / `signguNm` | 광역시도/시군구명 | 저장하지 않는다. `fullAdres`에 이미 들어 있다 |
+| `fullAdres` | 공고가 적은 전체 주소 | `notice_supply.supplied_address`; LH `dsSbd` 지번주소와 대조하는 키 |
+| `rnCodeNm` | 도로명 | 저장하지 않는다 |
+| `refrnLegaldongNm` | 참고 법정동명 | 저장하지 않는다 |
+| `pnu` | 필지고유번호 | `notice_supply.supplied_pnu`; 19자리 숫자만 저장하는 카탈로그 연결 키 |
+| `heatMthdNm` | 난방방식 원문 | 저장하지 않는다. 카탈로그 `housing_complex.heating_type_name`을 쓴다 |
+| `totHshldCo` | 대상 주택 전체 세대수 | 숫자로 변환해 `notice_supply.complex_total_unit_count` |
+| `sumSuplyCo` | 이번 공고 이 단지 공급 수 | `notice_supply.complex_supply_count` |
+| `rentGtn` | 임대보증금 | `notice_supply.deposit` (단지 단위 값이라 주택형 행마다 반복) |
+| `enty` / `surlus` | 계약금/잔금 | `notice_supply.down_payment/balance` |
+| `mtRntchrg` | 월임대료 | `notice_supply.monthly_rent` |
 
 원천에는 `suplyHoCo`와 `prtpay`도 보이지만 현재 수신 레코드에는 넣지 않는다.
 건설임대 실측에서 `suplyHoCo`는 0 또는 의미 없는 상수였고 `prtpay`는 항상 0이었다.
@@ -244,7 +244,8 @@ GET /1613000/HWSPR02/rsdtRcritNtcList
 
 ## 5. LH 공통 요청 파생 규칙
 
-LH 두 API는 먼저 저장된 `notice_version.detail_url`에서 요청 값을 얻는다.
+LH 두 API는 먼저 저장된 `notice.detail_url`에서 요청 값을 얻는다. 두 호출은 파라미터가 같아서
+`LhNoticeIngestService`가 한 번에 이어서 부른다.
 
 ```text
 ...selectWrtancInfo.do
@@ -260,10 +261,10 @@ LH 두 API는 먼저 저장된 `notice_version.detail_url`에서 요청 값을 �
 | `ccrCnntSysDsCd` | `CCR_CNNT_SYS_DS_CD` | O | 연결 시스템 구분 |
 | `uppAisTpCd` | `UPP_AIS_TP_CD` | O | 상위 공고유형 |
 | `aisTpCd` | `AIS_TP_CD` | X | 링크에 없으면 요청에서도 생략 |
-| `NoticeVersion.supplyType` | `SPL_INF_TP_CD` | O | 아래 resolver 표로 계산 |
+| `notice.supply_type_name` | `SPL_INF_TP_CD` | O | 아래 resolver 표로 계산 |
 | 고정값 | `PG_SZ` / `PAGE` | O | `100` / `1` |
 
-| 마이홈 `SupplyType` | `SPL_INF_TP_CD` |
+| 마이홈 `suplyTyNm` | `SPL_INF_TP_CD` |
 | --- | --- |
 | 5년임대, 10년임대 | `060` |
 | 50년임대 | `061` |
@@ -313,16 +314,16 @@ GET /B552555/lhLeaseNoticeDtlInfo1/getLeaseNoticeDtlInfo1
 
 | 데이터셋 | 제공 정보 | 저장 위치 |
 | --- | --- | --- |
-| `resHeader` | 성공 여부와 원천 응답시각 | 성공 검사, `lh_notice_supplement.source_responded_at` |
-| `dsEtcInfo` | 기타사항, 정정·취소 사유 | `lh_notice_supplement.correction_reason` |
+| `resHeader` | 성공 여부와 원천 응답시각 | 성공 검사에만 쓰고 저장하지 않는다 |
+| `dsEtcInfo` | 기타사항, 정정·취소 사유 | `notice.correction_reason` |
 | `dsSplScdl` | 신청·서류·계약 일정 | `notice_schedule` |
 | `dsCtrtPlc` | 방문 접수처와 운영 안내 | `reception_place` |
-| `dsSbd` | 공고 시점의 단지 상세 | `lh_complex_detail` |
+| `dsSbd` | 공고 시점의 단지 상세 | 저장하지 않는다. 공급행을 잇는 지번주소 키로 쓰고 입주예정월만 `notice_supply.move_in_year_month`로 옮긴다 |
 | `dsAhflInfo` | 공고문·카탈로그 파일 | `notice_attachment` |
 | `dsSbdAhfl` | 조감도·배치도·위치도 | `notice_attachment` |
 
 호출 메타데이터인 `PAN_ID`와 네 코드, 데이터셋 존재 여부, 수집시각은
-응답 묶음의 루트인 `lh_notice_supplement`에도 저장한다.
+요청에 쓴 `panId`와 공급정보구분코드는 `notice.source_pan_id`·`lh_supply_info_type_code`에 남긴다.
 
 ### 6.3 `resHeader`와 `dsEtcInfo`
 
@@ -330,8 +331,8 @@ GET /B552555/lhLeaseNoticeDtlInfo1/getLeaseNoticeDtlInfo1
 | --- | --- | --- |
 | `SS_CODE` | 처리 성공 코드 | `Y`인지 검사 |
 | `RS_MSG` | 처리 메시지 | 오류 메시지에 사용, 별도 저장 안 함 |
-| `RS_DTTM` | 원천 응답시각 | `lh_notice_supplement.source_responded_at` |
-| `CRC_RSN` | 정정·취소 사유 | 첫 유효값을 `lh_notice_supplement.correction_reason`에 저장 |
+| `RS_DTTM` | 원천 응답시각 | 저장하지 않는다. 수집 시각은 `notice.lh_fetched_at` |
+| `CRC_RSN` | 정정·취소 사유 | 첫 유효값을 `notice.correction_reason`에 저장 |
 | `ETC_CTS` | 기타사항 | 수신하지만 현재 저장하지 않음 |
 
 ### 6.4 `dsSplScdl`
@@ -357,13 +358,13 @@ GET /B552555/lhLeaseNoticeDtlInfo1/getLeaseNoticeDtlInfo1
 
 | 필드 | 의미 | 저장 위치 |
 | --- | --- | --- |
-| `LCC_NT_NM` | LH 단지명 | `lh_complex_detail.complex_name` |
-| `LGDN_ADR` / `LGDN_DTL_ADR` | 지번 주소/상세주소 | `lh_complex_detail.lot_address/lot_detail_address` |
-| `HSH_CNT` | 전체 세대수 | `lh_complex_detail.total_unit_count` |
-| `HTN_FMLA_DESC` | 난방방식 설명 | `lh_complex_detail.heating_description` |
-| `DDO_AR` | 전용면적 범위 원문 | `lh_complex_detail.exclusive_area_range` |
-| `MVIN_XPC_YM` | 입주예정 연월 | `lh_complex_detail.expected_move_in_year_month` |
-| `SPL_INF_GUD_FCTS` | 공급 안내 | `lh_complex_detail.guidance_text` |
+| `LCC_NT_NM` | LH 단지명 | `dsList01`의 `SBD_LGO_NM`과 잇는 키; 확정 시 `notice_supply.lh_complex_label` |
+| `LGDN_ADR` / `LGDN_DTL_ADR` | 지번 주소/상세주소 | 이어 붙여 `notice_supply.supplied_address`와 대조. 저장하지 않는다 |
+| `HSH_CNT` | 전체 세대수 | 주소가 유일해도 `notice_supply.complex_total_unit_count`와 다르면 확정하지 않는다 |
+| `HTN_FMLA_DESC` | 난방방식 설명 | 저장하지 않는다 |
+| `DDO_AR` | 전용면적 범위 원문 | 저장하지 않는다. 주택형별 면적은 15056765가 준다 |
+| `MVIN_XPC_YM` | 입주예정 연월 | `notice_supply.move_in_year_month` |
+| `SPL_INF_GUD_FCTS` | 공급 안내 | 저장하지 않는다 |
 
 ### 6.7 `dsAhflInfo`와 `dsSbdAhfl`
 
@@ -418,17 +419,24 @@ GET /B552555/lhLeaseNoticeSplInfo1/getLeaseNoticeSplInfo1
 
 | 필드 | 의미 | 저장 위치/처리 |
 | --- | --- | --- |
-| `SBD_LGO_NM` | LH 단지명 | `lh_unit_supply.complex_label` |
-| `HTY_NNA` | LH 주택형명 | `lh_unit_supply.type_name` |
-| `DDO_AR` | 전용면적 | `lh_unit_supply.exclusive_area` |
-| `SPL_AR` | 공급면적 | `lh_unit_supply.supply_area` |
-| `HSH_CNT` | 단지·주택형 전체 세대수 | `lh_unit_supply.total_unit_count` |
-| `NOW_HSH_CNT` | 이번 공고 공급 세대수 | `lh_unit_supply.supplied_unit_count` |
-| `RFE` | 월임대료 | 실측 fixture에서 `공고문 참조`라 수신 레코드·DB에 저장하지 않음 |
-| `LS_GMY` | 임대보증금 | 실측 fixture에서 `공고문 참조`라 수신 레코드·DB에 저장하지 않음 |
+| `SBD_LGO_NM` | LH 단지명 | `notice_supply.lh_complex_label`; `dsSbd.LCC_NT_NM`과 잇는 키 |
+| `HTY_NNA` | LH 주택형명 | `notice_supply.type_name` |
+| `DDO_AR` | 전용면적 | `notice_supply.exclusive_area`; 카탈로그 주택형과 ±0.05㎡ 비교 |
+| `SPL_AR` | 공급면적 | `notice_supply.supply_area` |
+| `HSH_CNT` | 단지·주택형 전체 세대수 | `notice_supply.unit_total_count` |
+| `NOW_HSH_CNT` | 이번 공고 공급 세대수 | `notice_supply.unit_supply_count` — **금회 공급호수** |
+| `RFE` | 월임대료 | `notice_supply.lh_monthly_rent_text`에 **문자열 그대로**. 아래 설명 참고 |
+| `LS_GMY` | 임대보증금 | `notice_supply.lh_deposit_text`에 **문자열 그대로**. 아래 설명 참고 |
 
-호출 한 번의 메타데이터와 `dsList01` 존재 여부는 `lh_unit_supply_batch`에,
-각 `dsList01` 행은 순서대로 `lh_unit_supply`에 저장한다.
+`LS_GMY`·`RFE`를 숫자로 파싱하지 않는 이유는, API가 `dsList01Nm`에 "임대보증금(원)"·"월임대료(원)"
+이라고 써 주는데도 기록해 둔 실측 fixture에서는 두 값이 `"공고문 참조"` 문자열이었기 때문이다.
+파싱해 버리면 어느 쪽이 왔는지 셀 수가 없다. 이 두 값은 **주택형별 임대료를 주는 유일한 원천**이라
+(마이홈은 단지 단위로만 준다) 버리지 않고 원문으로 남긴 뒤, 숫자가 오는 공고가 얼마나 되는지 확인하고
+숫자 컬럼으로 승격한다.
+
+각 `dsList01` 행은 `dsSbd`를 거쳐 마이홈 공급행에 닿으면 그 행의 임대조건·PNU를 복사한 주택형 행이 되고,
+못 닿으면 마이홈 값 없이 `notice_supply` 행으로 남는다. 호출 메타데이터는 `notice.source_pan_id`·
+`lh_supply_info_type_code`·`lh_fetched_at` 세 칸으로 줄었다.
 
 ## 8. 15059475 — LH 임대단지 주택형 카탈로그
 
@@ -478,48 +486,49 @@ GET /B552555/lhLeaseInfo1/lhLeaseInfo1
 
 | 필드 | 의미 | 저장 위치/처리 |
 | --- | --- | --- |
-| `ARA_NM` | 지역명 | `lh_lease_info.area_name`; 카탈로그 지역명과 비교 |
-| `AIS_TP_CD_NM` | 공급유형명 | `lh_lease_info.supply_type_name`; 카탈로그 `HousingComplex`와 비교 |
-| `SBD_LGO_NM` | LH 단지명 | `lh_lease_info.complex_label`; 이름 매칭의 비교값 |
-| `SUM_HSH_CNT` | 단지·공급유형 전체 세대수 | `lh_lease_info.complex_total_unit_count`; `HousingComplex.unit_count` 검증 |
-| `DDO_AR` | 전용면적(㎡) | `lh_lease_info.exclusive_area`; `UnitType.exclusive_area`와 정확 비교 |
-| `HSH_CNT` | 해당 전용면적 주택형 전체 세대수 | `lh_lease_info.total_unit_count` 및 확정된 `unit_type.total_unit_count` |
-| `LS_GMY` | 현재 카탈로그 주택형 임대보증금 | `lh_lease_info.deposit`; 숫자로 파싱 가능한 경우 확정 `unit_type.baseRentTerms.deposit`에도 반영 |
-| `RFE` | 현재 카탈로그 주택형 월임대료 | `lh_lease_info.monthly_rent`; 숫자로 파싱 가능한 경우 확정 `unit_type.baseRentTerms.monthlyRent`에도 반영 |
-| `resHeader.RS_DTTM` | 원천 응답 시각 | `lh_lease_info_batch.source_responded_at` |
+| `ARA_NM` | 지역명 | 카탈로그 지역명과 비교. 저장하지 않는다 |
+| `AIS_TP_CD_NM` | 공급유형명 | `housing_complex.supply_type_name`과 비교. 저장하지 않는다 |
+| `SBD_LGO_NM` | LH 단지명 | `housing_complex.name`과 비교. 저장하지 않는다 |
+| `SUM_HSH_CNT` | 단지·공급유형 전체 세대수 | `housing_complex.unit_count` 검증. 다르면 반영하지 않는다 |
+| `DDO_AR` | 전용면적(㎡) | `unit_type.exclusive_area`와 정확 비교(근사 없음) |
+| `HSH_CNT` | 해당 전용면적 주택형 전체 세대수 | 확정된 `unit_type.total_unit_count` |
+| `LS_GMY` | 현재 카탈로그 주택형 임대보증금 | 확정된 `unit_type.base_deposit` (실측 6,710/6,710 전부 숫자) |
+| `RFE` | 현재 카탈로그 주택형 월임대료 | 확정된 `unit_type.base_monthly_rent` |
+| `resHeader.RS_DTTM` | 원천 응답 시각 | 성공 검사에만 쓰고 저장하지 않는다 |
 
 이 API에는 단지 ID·PNU·상세주소가 없다. 따라서 `ARA_NM`·`SBD_LGO_NM`·공급유형·
 `SUM_HSH_CNT`가 하나의 카탈로그 단지·공급유형으로 좁혀지고, `DDO_AR`가
 `BigDecimal` 기준으로 정확히 하나의 `UnitType`과 일치할 때만 `HSH_CNT`를 반영한다.
 ±0.05㎡ 근사 매칭은 사용하지 않는다. 같은 UnitType을 가리키는 원천행이 여러 개면
-모두 `AMBIGUOUS`로 보류하고 마지막 행이 덮어쓰지 못하게 한다.
+마지막 행이 앞 행을 덮어쓰지 못하도록 아무것도 반영하지 않는다.
 
-`dsList`가 누락되거나 모든 페이지가 비어 있으면 새 스냅샷을 교체하지 않는다.
-성공한 전국 스냅샷은 `lh_lease_info_batch` 한 건과 그 자식 원천행을 교체하고,
-이전 매칭 결과를 다시 계산한다.
+`dsList`가 누락되거나 모든 페이지가 비어 있으면 아무것도 바꾸지 않는다. 유효한 전국 응답을 받으면
+반영 전에 모든 `unit_type.total_unit_count`를 비워, 이번 응답이 말하지 않는 값이 남지 않게 한다.
+**원천행은 저장하지 않는다** — 공고와 무관한 전국 카탈로그고 한 번 호출이면 전부 받으므로
+재적재 비용이 원천행을 남길 값보다 작다.
 
 ## 9. 원천 연결 키 지도
 
 ```mermaid
 flowchart LR
     A["15108420 pblancId"] -->|"beforePblancId"| A
-    A --> V["notice_version"]
+    A --> V["notice"]
     V -->|"detailUrl.panId + 코드"| D["15057999 / 15056765"]
-    N["notice_housing PNU"] -->|"PNU"| C["housing_complex"]
-    U["lh_unit_supply SBD_LGO_NM"] -->|"LH 단지명"| L["lh_complex_detail LCC_NT_NM"]
-    L -->|"주소 + 세대수"| N
+    N["notice_supply supplied_pnu"] -->|"PNU + 공급유형"| C["housing_complex"]
+    U["dsList01 SBD_LGO_NM"] -->|"LH 단지명"| L["dsSbd LCC_NT_NM"]
+    L -->|"지번주소 + 세대수"| N
     U -->|"전용면적 ±0.05㎡"| T["unit_type"]
-    I["lh_lease_info 지역·단지명·공급유형·SUM_HSH_CNT"] -->|"정확한 DDO_AR"| T
+    I["15059475 지역·단지명·공급유형·SUM_HSH_CNT"] -->|"정확한 DDO_AR"| T
     C --> T
 ```
 
 | 연결 | 양쪽 값 | 역할 |
 | --- | --- | --- |
 | 공고 정정 체인 | `pblancId` ← `beforePblancId` | 이전 공고버전과 다음 정정·취소 버전을 연결 |
-| 마이홈 공고 → LH 호출 | `notice_version.detail_url`의 `panId`와 코드 | 같은 공고의 LH 상세·공급정보 요청을 구성 |
-| 공고 공급행 → 카탈로그 단지 | `notice_housing.supplied_pnu` = `housing_complex.pnu` | 마이홈 두 원천의 안전한 단지 연결 |
+| 마이홈 공고 → LH 호출 | `notice.detail_url`의 `panId`와 코드 | 같은 공고의 LH 상세·공급정보 요청을 구성 |
+| 공고 공급행 → 카탈로그 단지 | `notice_supply.supplied_pnu` = `housing_complex.pnu` (+ 같은 공급유형명) | 마이홈 두 원천의 안전한 단지 연결 |
 | LH 공급행 → LH 단지 상세 | `SBD_LGO_NM` = `LCC_NT_NM` | 같은 LH 명명 체계 안에서 단지 연결 |
-| LH 단지 상세 → 공고 공급행 | 주소, 필요 시 세대수 | PNU가 없는 LH 상세를 마이홈 공고행에 연결 |
+| LH 단지 상세 → 공고 공급행 | `notice_supply.supplied_address`, 필요 시 세대수 | PNU가 없는 LH 상세를 마이홈 공고행에 연결 |
 | LH 공급행 → 카탈로그 주택형 | 단지 경로 + `DDO_AR`와 `exclusive_area` 차이 ≤ 0.05㎡ | 주택형명 표기 차이를 피하고 면적으로 연결 |
 | LH 단지 카탈로그 → 카탈로그 주택형 | `ARA_NM`·`SBD_LGO_NM`·공급유형·`SUM_HSH_CNT` + `DDO_AR` 정확 일치 | `HSH_CNT`를 `UnitType.totalUnitCount`에 반영 |
 
@@ -531,17 +540,14 @@ flowchart LR
 관리 엔드포인트는 아래 순서로 호출한다.
 
 1. `POST /admin/ingest/complexes` — 15110581 카탈로그 적재
-2. `POST /admin/ingest/notices` — 15108420 공고와 공급행 적재
-3. `POST /admin/ingest/notice-details` — 15057999 LH 상세 적재
-4. `POST /admin/ingest/unit-supplies` — 15056765 LH 공급행 적재
-5. `POST /admin/ingest/lease-infos` — 15059475 전국 주택형 카탈로그 스냅샷 적재
-6. `POST /admin/ingest/matches/catalog?noticeVersionId=...` — PNU로 카탈로그 연결
-7. `POST /admin/ingest/matches/lh?noticeVersionId=...` — 주소·세대수로 LH 상세 연결
-8. `POST /admin/ingest/matches/unit-type?noticeVersionId=...` — 앞의 두 연결과 전용면적으로 주택형 연결
+2. `POST /admin/ingest/lease-infos` — 15059475로 주택형 총세대수·기준 임대조건 보강
+3. `POST /admin/ingest/notices` — 15108420 공고와 단지 단위 공급행 적재
+4. `POST /admin/ingest/lh-notices` — 15057999 + 15056765를 한 번에 받아 공급행을 주택형 단위로 재구성
+5. `POST /admin/ingest/links` — 공급행에 카탈로그 단지·주택형 FK 채우기
 
-3번과 4번은 같은 공고를 입력으로 쓰지만 서로 다른 API이므로 선후 의존이 없다.
-5번은 공고와 무관한 전국 카탈로그 스냅샷이라 1번의 단지 카탈로그가 있어야 매칭 결과를 만들 수 있다.
-6번과 7번도 둘 다 끝난 뒤 8번을 실행하면 된다.
+2번은 1번이 만든 단지·주택형이 있어야 붙일 곳이 있다. 4번은 3번이 만든 공급행을 다시 쓰므로 순서가 있다.
+5번은 공고와 카탈로그가 서로 다른 시점에 들어오기 때문에 마지막에 따로 돈다 — 규칙을 고쳤거나
+카탈로그를 다시 받았을 때 **원천 재호출 없이** 다시 돌려도 된다.
 
 ## 11. 검토했지만 쓰지 않는 원천
 
@@ -550,6 +556,8 @@ flowchart LR
 | 15058476 공공임대주택 단지 기본정보 | 15110581로 대체된 구버전 |
 | 15058530 LH 분양임대공고문 | 현재 마이홈 공고보다 정정 체인, PNU, 임대조건 정보가 부족함 |
 | 15108420 `ltRsdtRcritNtcList` | 분양 모집공고라 건설형 임대 모델의 경계 밖 |
+| 15088707 마이홈포털 임대주택 입주자모집공고(파일데이터) | data.go.kr 등록 확장자가 PDF. 공고문 첨부 링크 모음일 뿐 구조화된 표가 아님 |
+| 마이홈 상세 페이지(myhome.go.kr) HTML | LH·SH·GH 전 기관에서 주택형별 데이터가 실측으로 확인되지만 문서화된 API 계약이 아니라 채택하지 않음. 상세는 [원천-정리.md §6](원천-정리.md) |
 
 `GET /admin/ingest/probe`는 지정한 경로의 원천 응답을 수동 확인하는 개발 도구다.
 고정 적재 서비스가 아니므로 다섯 번째 원천으로 세지 않는다.
@@ -558,23 +566,22 @@ flowchart LR
 
 아래 수치는 2026-08-13 적재 스냅샷이다.
 
+아래 수치는 이전 18개 테이블 구조로 측정한 것이라 테이블 이름이 지금과 다르다.
+새 구조로 다시 적재하면 `notice_supply`가 310행(주택형 290 + 단지 단위 잔여 20)이 된다.
+
 | 항목 | 수치 |
 | --- | ---: |
-| LH 호출 대상 공고버전 | 54 |
-| `lh_unit_supply_batch` | 54 |
-| `lh_unit_supply` 원천 공급행 | 290 |
-| 카탈로그 `UnitType` 확정 연결 | 202 |
-| 같은 면적 후보가 여러 개인 `AMBIGUOUS` | 30 |
-| 카탈로그까지 경로가 끊긴 `NO_CATALOG_PATH` | 58 |
-| `lh_lease_info` 원천행 | 6,710 |
-| 15059475 `MATCHED` | 1,487 |
-| 15059475 `AMBIGUOUS` | 76 |
-| 15059475 `CONFLICT_PROGRAM_UNIT_COUNT` | 8 |
-| 15059475 `UNMATCHED` | 5,139 |
+| LH 호출 대상 공고 | 54 |
+| LH 주택형 공급행 | 290 |
+| 카탈로그 `UnitType` 확정 연결 | 216 |
+| 같은 면적 후보가 여러 개라 미확정 | 30 |
+| 카탈로그까지 경로가 끊겨 미확정 | 44 |
+| 15059475 원천행 | 6,710 |
+| 15059475 카탈로그 반영 | 1,487 |
 
-`AMBIGUOUS`는 같은 전용면적에 공급대상만 다른 주택형이 여럿인 경우가 주원인이다.
-`NO_CATALOG_PATH`는 주소 또는 PNU 연결이 끊긴 경우이며 LH 공급행 자체가 잘못됐다는 뜻은 아니다.
+면적 후보가 여러 개인 건 같은 전용면적에 공급대상만 다른 주택형이 여럿인 경우가 주원인이다.
+경로가 끊긴 건 주소 또는 PNU 연결이 안 된 경우이며 LH 공급행 자체가 잘못됐다는 뜻은 아니다.
 
-카탈로그 매칭이 없어도 `lh_unit_supply`의 LH 단지명, 주택형명, 면적,
-전체 세대수, 이번 공급 세대수는 원천 사실로 남는다.
-조회에서는 매칭 테이블을 선택적 보강값으로 다루고 이 원천 행을 버리지 않는다.
+**카탈로그 연결이 없어도 `notice_supply`의 LH 단지명, 주택형명, 면적, 전체 세대수,
+금회 공급호수는 원천 사실로 남는다.** 조회는 `notice_supply`에서 출발하고 `unit_type`은
+left join 보강값으로 다룬다. 왜 안 붙었는지는 `unmatched_reason` 한 칸에 남는다.

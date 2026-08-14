@@ -2,7 +2,6 @@ package test.domain.ingest;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import test.domain.housing.SupplyType;
 
 import java.util.List;
 
@@ -20,7 +19,7 @@ class ConstructionRentalPolicyTest {
                 "장기전세", "5년임대", "10년임대", "50년임대");
 
         assertThat(allowed).allSatisfy(label -> assertThat(policy.rejectSupplyType(label)).isEmpty());
-        assertThat(SupplyType.values()).filteredOn(SupplyType::isConstructionRental).hasSize(8);
+        assertThat(policy.rejectSupplyType("  국민임대  ")).isEmpty();
     }
 
     @Test

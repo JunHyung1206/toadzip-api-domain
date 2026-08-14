@@ -13,39 +13,28 @@ import test.domain.housing.Address;
 import test.domain.housing.BaseRentTerms;
 import test.domain.housing.HousingComplex;
 import test.domain.housing.HousingComplexRepository;
-import test.domain.housing.LhLeaseInfoBatch;
-import test.domain.housing.LhLeaseInfoBatchRepository;
-import test.domain.housing.SupplyType;
 import test.domain.housing.UnitType;
 import test.domain.housing.UnitTypeRepository;
-import test.domain.match.LhLeaseInfoUnitTypeMatch;
-import test.domain.match.LhLeaseInfoUnitTypeMatchRepository;
-import test.domain.match.LhLeaseInfoUnitTypeMatchStatus;
-import test.domain.source.SourceSystem;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.util.Comparator;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** 2026-08-13에 15059475에서 직접 읽은 응답 구조를 저장·매칭한다. HTTP 호출은 제외한다. */
+/**
+ * 2026-08-13에 15059475에서 직접 읽은 응답 구조를 카탈로그에 반영한다. HTTP 호출은 제외한다.
+ *
+ * <p>원천행을 저장하지 않으므로, 검증 대상은 "무엇이 {@link UnitType} 에 반영됐고 무엇이 안 됐나"다.
+ */
 @DataJpaTest
 class LhLeaseInfoIngestServiceTest {
 
     private static final ObjectMapper MAPPER = JsonMapper.builder().build();
-    private static final Clock FIXED_CLOCK =
-            Clock.fixed(Instant.parse("2026-08-13T04:00:00Z"), ZoneId.of("Asia/Seoul"));
 
     @Autowired private HousingComplexRepository complexRepository;
     @Autowired private UnitTypeRepository unitTypeRepository;
-    @Autowired private LhLeaseInfoBatchRepository batchRepository;
-    @Autowired private LhLeaseInfoUnitTypeMatchRepository matchRepository;
     @Autowired private PlatformTransactionManager transactionManager;
     @Autowired private EntityManager entityManager;
 
@@ -61,16 +50,13 @@ class LhLeaseInfoIngestServiceTest {
         TransactionTemplate committed = new TransactionTemplate(transactionManager);
         committed.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         committed.executeWithoutResult(status -> {
-            matchRepository.deleteAll();
-            batchRepository.deleteAll();
             unitTypeRepository.deleteAll();
             complexRepository.deleteAll();
         });
 
         committed.executeWithoutResult(status -> {
             HousingComplex complex = complexRepository.save(new HousingComplex(
-                    "강릉교동 행복주택", address("강원특별자치도", "강릉시"),
-                    SourceSystem.MYHOME_PORTAL, "10001", SupplyType.HAPPY_HOUSE, "행복주택", 180, "LH"));
+                    "강릉교동 행복주택", address("강원특별자치도", "강릉시"), "10001", "행복주택", 180, "LH"));
             matched36 = unitTypeRepository.save(new UnitType(complex, "36", area("36.9700"), area("20.1000")));
             matched36.updateBaseRentTerms(new BaseRentTerms(10_000_000L, 100_000L, 3_000_000L));
             matched26 = unitTypeRepository.save(new UnitType(complex, "26", area("26.9500"), area("15.0000")));
@@ -78,62 +64,57 @@ class LhLeaseInfoIngestServiceTest {
             ambiguousB = unitTypeRepository.save(new UnitType(complex, "21B", area("21.8600"), area("12.1000")));
 
             HousingComplex nearAreaComplex = complexRepository.save(new HousingComplex(
-                    "강릉교동 근접 행복주택", address("강원특별자치도", "강릉시"),
-                    SourceSystem.MYHOME_PORTAL, "10002", SupplyType.HAPPY_HOUSE, "행복주택", 70, "LH"));
+                    "강릉교동 근접 행복주택", address("강원특별자치도", "강릉시"), "10002", "행복주택", 70, "LH"));
             nearArea = unitTypeRepository.save(
                     new UnitType(nearAreaComplex, "36", area("36.9200"), area("20.1000")));
         });
 
-        service = new LhLeaseInfoIngestService(null, MAPPER, batchRepository, matchRepository,
-                complexRepository, unitTypeRepository, transactionManager, FIXED_CLOCK);
+        service = new LhLeaseInfoIngestService(
+                null, MAPPER, complexRepository, unitTypeRepository, transactionManager);
+    }
+
+    private UnitType reload(UnitType unitType) {
+        return unitTypeRepository.findById(unitType.getId()).orElseThrow();
     }
 
     @Test
-    @DisplayName("15059475의 면적별 HSH_CNT를 원천행으로 남기고 유일 매칭 주택형에만 반영한다")
-    void storesSourceRowsAndUpdatesOnlyUniquelyMatchedUnitTypes() {
+    @DisplayName("유일 매칭된 주택형에만 HSH_CNT·LS_GMY·RFE를 반영한다")
+    void updatesOnlyUniquelyMatchedUnitTypes() {
         service.apply(List.of(MAPPER.readTree(RESPONSE)));
         entityManager.flush();
         entityManager.clear();
 
-        LhLeaseInfoBatch batch = batchRepository.findAll().getFirst();
-        List<LhLeaseInfoUnitTypeMatch> matches = matchRepository.findAll().stream()
-                .sorted(Comparator.comparingInt(match -> match.getLhLeaseInfo().getDisplayOrder()))
-                .toList();
-
-        assertThat(batch.getLeaseInfos()).hasSize(4);
-        assertThat(batch.getLeaseInfos().get(0).getComplexTotalUnitCount()).isEqualTo(180);
-        assertThat(batch.getLeaseInfos().get(0).getTotalUnitCount()).isEqualTo(72);
-        assertThat(batch.getLeaseInfos().get(0).getDeposit()).isEqualTo(19_546_000L);
-        assertThat(batch.getLeaseInfos().get(0).getMonthlyRent()).isEqualTo(195_460L);
-        assertThat(matches).extracting(LhLeaseInfoUnitTypeMatch::getStatus).containsExactly(
-                LhLeaseInfoUnitTypeMatchStatus.MATCHED,
-                LhLeaseInfoUnitTypeMatchStatus.MATCHED,
-                LhLeaseInfoUnitTypeMatchStatus.UNMATCHED,
-                LhLeaseInfoUnitTypeMatchStatus.CONFLICT_PROGRAM_UNIT_COUNT);
-        assertThat(unitTypeRepository.findById(matched36.getId()).orElseThrow().getTotalUnitCount()).isEqualTo(72);
-        assertThat(unitTypeRepository.findById(matched26.getId()).orElseThrow().getTotalUnitCount()).isEqualTo(36);
-        assertThat(unitTypeRepository.findById(matched36.getId()).orElseThrow().getBaseRentTerms().getDeposit())
-                .isEqualTo(19_546_000L);
-        assertThat(unitTypeRepository.findById(matched36.getId()).orElseThrow().getBaseRentTerms().getMonthlyRent())
-                .isEqualTo(195_460L);
-        assertThat(unitTypeRepository.findById(matched36.getId()).orElseThrow().getBaseRentTerms()
-                .getConvertibleDepositLimit()).isEqualTo(3_000_000L);
-        assertThat(unitTypeRepository.findById(ambiguousA.getId()).orElseThrow().getTotalUnitCount()).isNull();
-        assertThat(unitTypeRepository.findById(ambiguousB.getId()).orElseThrow().getTotalUnitCount()).isNull();
+        assertThat(reload(matched36).getTotalUnitCount()).isEqualTo(72);
+        assertThat(reload(matched26).getTotalUnitCount()).isEqualTo(36);
+        assertThat(reload(matched36).getBaseRentTerms().getDeposit()).isEqualTo(19_546_000L);
+        assertThat(reload(matched36).getBaseRentTerms().getMonthlyRent()).isEqualTo(195_460L);
+        // 전환보증금 한도는 15059475가 주지 않으므로 마이홈 값을 유지한다.
+        assertThat(reload(matched36).getBaseRentTerms().getConvertibleDepositLimit()).isEqualTo(3_000_000L);
+        // 21.85㎡는 21A(21.84)·21B(21.86) 어느 쪽과도 정확히 같지 않아 아무것도 안 붙는다.
+        assertThat(reload(ambiguousA).getTotalUnitCount()).isNull();
+        assertThat(reload(ambiguousB).getTotalUnitCount()).isNull();
     }
 
     @Test
-    @DisplayName("새 전국 스냅샷은 이전 원천행과 더 이상 확인되지 않는 주택형 총세대수를 함께 교체한다")
-    void replacesThePreviousSnapshotAndClearsStaleUnitTypeCounts() {
+    @DisplayName("SUM_HSH_CNT가 카탈로그 단지 세대수와 다르면 반영하지 않는다")
+    void ignoresRowsWhoseProgramUnitCountConflicts() {
+        service.apply(List.of(MAPPER.readTree(CONFLICTING_PROGRAM_COUNT_RESPONSE)));
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(reload(matched36).getTotalUnitCount()).isNull();
+    }
+
+    @Test
+    @DisplayName("새 전국 응답은 더 이상 확인되지 않는 주택형의 총세대수를 비운다")
+    void clearsStaleUnitTypeCountsOnTheNextSnapshot() {
         service.apply(List.of(MAPPER.readTree(RESPONSE)));
         service.apply(List.of(MAPPER.readTree(UPDATED_RESPONSE)));
         entityManager.flush();
         entityManager.clear();
 
-        assertThat(batchRepository.count()).isOne();
-        assertThat(batchRepository.findAll().getFirst().getLeaseInfos()).hasSize(1);
-        assertThat(unitTypeRepository.findById(matched36.getId()).orElseThrow().getTotalUnitCount()).isEqualTo(70);
-        assertThat(unitTypeRepository.findById(matched26.getId()).orElseThrow().getTotalUnitCount()).isNull();
+        assertThat(reload(matched36).getTotalUnitCount()).isEqualTo(70);
+        assertThat(reload(matched26).getTotalUnitCount()).isNull();
     }
 
     @Test
@@ -143,29 +124,22 @@ class LhLeaseInfoIngestServiceTest {
         entityManager.flush();
         entityManager.clear();
 
-        LhLeaseInfoUnitTypeMatch match = matchRepository.findAll().getFirst();
-        assertThat(match.getStatus()).isEqualTo(LhLeaseInfoUnitTypeMatchStatus.UNMATCHED);
-        assertThat(match.getUnitType()).isNull();
-        assertThat(unitTypeRepository.findById(nearArea.getId()).orElseThrow().getTotalUnitCount()).isNull();
+        assertThat(reload(nearArea).getTotalUnitCount()).isNull();
     }
 
     @Test
-    @DisplayName("복수 원천행이 같은 주택형을 가리키면 모두 보류하고 총세대수를 갱신하지 않는다")
+    @DisplayName("복수 원천행이 같은 주택형을 가리키면 마지막 값이 앞 값을 덮어쓰지 못하게 아무것도 반영하지 않는다")
     void doesNotUpdateAUnitTypeWhenMultipleSourceRowsTargetIt() {
         service.apply(List.of(MAPPER.readTree(DUPLICATE_TARGET_RESPONSE)));
         entityManager.flush();
         entityManager.clear();
 
-        List<LhLeaseInfoUnitTypeMatch> matches = matchRepository.findAll();
-        assertThat(matches).extracting(LhLeaseInfoUnitTypeMatch::getStatus)
-                .containsOnly(LhLeaseInfoUnitTypeMatchStatus.AMBIGUOUS);
-        assertThat(matches).extracting(LhLeaseInfoUnitTypeMatch::getCandidateCount).containsOnly(2);
-        assertThat(unitTypeRepository.findById(matched36.getId()).orElseThrow().getTotalUnitCount()).isNull();
+        assertThat(reload(matched36).getTotalUnitCount()).isNull();
     }
 
     @Test
-    @DisplayName("빈 dsList 또는 누락된 dsList는 기존 전국 스냅샷을 지우지 않는다")
-    void preservesPreviousSnapshotWhenTheDatasetIsMissingOrEmpty() {
+    @DisplayName("빈 dsList 또는 누락된 dsList는 이미 반영된 값을 지우지 않는다")
+    void preservesAppliedValuesWhenTheDatasetIsMissingOrEmpty() {
         service.apply(List.of(MAPPER.readTree(RESPONSE)));
 
         assertThat(service.apply(List.of(MAPPER.readTree(MISSING_LIST_RESPONSE))).failed()).isEqualTo(1);
@@ -173,10 +147,7 @@ class LhLeaseInfoIngestServiceTest {
         entityManager.flush();
         entityManager.clear();
 
-        assertThat(batchRepository.count()).isOne();
-        assertThat(batchRepository.findAll().getFirst().getLeaseInfos()).hasSize(4);
-        assertThat(matchRepository.count()).isEqualTo(4);
-        assertThat(unitTypeRepository.findById(matched36.getId()).orElseThrow().getTotalUnitCount()).isEqualTo(72);
+        assertThat(reload(matched36).getTotalUnitCount()).isEqualTo(72);
     }
 
     private Address address(String province, String district) {
@@ -197,7 +168,13 @@ class LhLeaseInfoIngestServiceTest {
                {"SUM_HSH_CNT":"180","HSH_CNT":"36","ARA_NM":"강원특별자치도 강릉시",
                 "AIS_TP_CD_NM":"행복주택","SBD_LGO_NM":"강릉교동 행복주택","DDO_AR":"26.95"},
                {"SUM_HSH_CNT":"180","HSH_CNT":"72","ARA_NM":"강원특별자치도 강릉시",
-                "AIS_TP_CD_NM":"행복주택","SBD_LGO_NM":"강릉교동 행복주택","DDO_AR":"21.85"},
+                "AIS_TP_CD_NM":"행복주택","SBD_LGO_NM":"강릉교동 행복주택","DDO_AR":"21.85"}],
+              "resHeader":[{"RS_DTTM":"20260813042736","SS_CODE":"Y"}]}]
+            """;
+
+    private static final String CONFLICTING_PROGRAM_COUNT_RESPONSE = """
+            [{"dsSch":[{"PG_SZ":"5","PAGE":"1"}]},
+             {"dsList":[
                {"SUM_HSH_CNT":"181","HSH_CNT":"70","ARA_NM":"강원특별자치도 강릉시",
                 "AIS_TP_CD_NM":"행복주택","SBD_LGO_NM":"강릉교동 행복주택","DDO_AR":"36.97"}],
               "resHeader":[{"RS_DTTM":"20260813042736","SS_CODE":"Y"}]}]

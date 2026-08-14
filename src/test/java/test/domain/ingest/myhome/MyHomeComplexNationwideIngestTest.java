@@ -10,15 +10,10 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.MultiValueMap;
 import test.domain.housing.HousingComplexRepository;
-import test.domain.housing.SupplyType;
 import test.domain.housing.UnitTypeRepository;
 import test.domain.ingest.ConstructionRentalPolicy;
 import test.domain.ingest.IngestReport;
 import test.domain.ingest.OpenApiClient;
-import test.domain.match.LhLeaseInfoUnitTypeMatchRepository;
-import test.domain.match.NoticeHousingCatalogMatchRepository;
-import test.domain.match.NoticeHousingUnitTypeMatchRepository;
-import test.domain.source.SourceSystem;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
@@ -43,12 +38,6 @@ class MyHomeComplexNationwideIngestTest {
     @Autowired
     private UnitTypeRepository unitTypeRepository;
     @Autowired
-    private LhLeaseInfoUnitTypeMatchRepository lhLeaseInfoMatchRepository;
-    @Autowired
-    private NoticeHousingCatalogMatchRepository catalogMatchRepository;
-    @Autowired
-    private NoticeHousingUnitTypeMatchRepository unitTypeMatchRepository;
-    @Autowired
     private PlatformTransactionManager transactionManager;
 
     private final MyHomeRegionCatalog regionCatalog = new MyHomeRegionCatalog();
@@ -60,9 +49,6 @@ class MyHomeComplexNationwideIngestTest {
         TransactionTemplate cleanup = new TransactionTemplate(transactionManager);
         cleanup.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         cleanup.executeWithoutResult(status -> {
-            unitTypeMatchRepository.deleteAll();
-            lhLeaseInfoMatchRepository.deleteAll();
-            catalogMatchRepository.deleteAll();
             unitTypeRepository.deleteAll();
             complexRepository.deleteAll();
         });
@@ -104,8 +90,8 @@ class MyHomeComplexNationwideIngestTest {
         IngestReport report = service.ingestNationwide(500, 50);
 
         assertThat(report.failed()).isOne();
-        assertThat(complexRepository.findBySourceSystemAndSourceComplexIdAndSupplyType(
-                SourceSystem.MYHOME_PORTAL, "90310001", SupplyType.HAPPY_HOUSE)).isPresent();
+        assertThat(complexRepository.findBySourceComplexIdAndSupplyTypeName("90310001", "행복주택"))
+                .isPresent();
         // 실패한 지역(11350)은 아무것도 남기지 않아 전국에서 단지가 하나만 저장돼야 한다.
         assertThat(complexRepository.count()).isOne();
     }

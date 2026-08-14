@@ -1,12 +1,16 @@
 package test.domain.ingest.lh;
 
 import org.springframework.stereotype.Component;
-import test.domain.housing.SupplyType;
+import test.domain.ingest.SourceValues;
 
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
- * 마이홈 {@link SupplyType} 을 LH 15057999 호출에 필요한 공급정보구분코드(SPL_INF_TP_CD)로 옮긴다.
+ * 마이홈이 준 공급유형 이름을 LH 호출에 필요한 공급정보구분코드(SPL_INF_TP_CD)로 옮긴다.
+ *
+ * <p>enum 이 아니라 표 하나다 — 이 값은 저장되지 않고 요청 파라미터로만 쓰인다.
  *
  * <p>통합공공임대는 아직 어느 코드로 응답하는지 실측하지 못해 뒤로 미룬다({@link Optional#empty()}).
  * 매입임대·전세임대는 건설형이 아니라 이 서비스로 들어올 일이 없어야 하므로 예외로 막는다.
@@ -14,18 +18,22 @@ import java.util.Optional;
 @Component
 public class LhSupplyInfoTypeResolver {
 
-    public Optional<String> resolve(SupplyType supplyType) {
-        if (supplyType == null || supplyType == SupplyType.INTEGRATED_PUBLIC_RENTAL) {
-            return Optional.empty();
+    private static final Map<String, String> CODE_BY_SUPPLY_TYPE_NAME = Map.of(
+            "5년임대", "060",
+            "10년임대", "060",
+            "50년임대", "061",
+            "국민임대", "062",
+            "영구임대", "062",
+            "장기전세", "062",
+            "행복주택", "063");
+
+    private static final Set<String> NOT_CONSTRUCTION_RENTAL = Set.of("매입임대", "전세임대");
+
+    public Optional<String> resolve(String supplyTypeName) {
+        String name = SourceValues.trimToNull(supplyTypeName);
+        if (name != null && NOT_CONSTRUCTION_RENTAL.contains(name)) {
+            throw new IllegalArgumentException("건설임대가 아닌 공급유형입니다: " + name);
         }
-        return Optional.of(switch (supplyType) {
-            case FIVE_YEAR_RENTAL, TEN_YEAR_RENTAL -> "060";
-            case FIFTY_YEAR_RENTAL -> "061";
-            case NATIONAL_RENTAL, PERMANENT_RENTAL, LONG_TERM_JEONSE -> "062";
-            case HAPPY_HOUSE -> "063";
-            case PURCHASED_RENTAL, JEONSE_RENTAL -> throw new IllegalArgumentException(
-                    "건설임대가 아닌 공급유형입니다: " + supplyType);
-            case INTEGRATED_PUBLIC_RENTAL -> throw new IllegalStateException("앞에서 제외되어야 합니다.");
-        });
+        return Optional.ofNullable(name).map(CODE_BY_SUPPLY_TYPE_NAME::get);
     }
 }

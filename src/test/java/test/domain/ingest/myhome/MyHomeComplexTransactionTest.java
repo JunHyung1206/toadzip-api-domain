@@ -9,11 +9,9 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import test.domain.housing.HousingComplexRepository;
-import test.domain.housing.SupplyType;
 import test.domain.housing.UnitTypeRepository;
 import test.domain.ingest.ConstructionRentalPolicy;
 import test.domain.ingest.IngestReport;
-import test.domain.source.SourceSystem;
 
 import java.util.Optional;
 
@@ -61,9 +59,9 @@ class MyHomeComplexTransactionTest {
 
         assertThat(report.failed()).isOne();
         assertThat(report.created()).isOne();
-        assertThat(complexRepository.findBySourceSystemAndSourceComplexIdAndSupplyType(
-                SourceSystem.MYHOME_PORTAL, FAILING_HSMP_SN, SupplyType.NATIONAL_RENTAL)).isEmpty();
-        assertThat(complexRepository.findBySourceSystemAndSourceComplexIdAndSupplyType(
-                SourceSystem.MYHOME_PORTAL, SAVED_HSMP_SN, SupplyType.NATIONAL_RENTAL)).isPresent();
+        assertThat(complexRepository.findBySourceComplexIdAndSupplyTypeName(FAILING_HSMP_SN, "국민임대"))
+                .isEmpty();
+        assertThat(complexRepository.findBySourceComplexIdAndSupplyTypeName(SAVED_HSMP_SN, "국민임대"))
+                .isPresent();
     }
 }

@@ -6,14 +6,10 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
-import test.domain.ingest.lh.LhNoticeDetailIngestService;
 import test.domain.ingest.lh.LhLeaseInfoIngestService;
-import test.domain.ingest.lh.LhUnitSupplyIngestService;
+import test.domain.ingest.lh.LhNoticeIngestService;
 import test.domain.ingest.myhome.MyHomeComplexIngestService;
 import test.domain.ingest.myhome.MyHomeNoticeIngestService;
-import test.domain.match.NoticeHousingCatalogMatchService;
-import test.domain.match.NoticeHousingLhMatchService;
-import test.domain.match.NoticeHousingUnitTypeMatchService;
 
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -32,17 +28,11 @@ class IngestControllerTest {
     @MockitoBean
     private MyHomeNoticeIngestService noticeIngestService;
     @MockitoBean
-    private LhNoticeDetailIngestService lhNoticeDetailIngestService;
-    @MockitoBean
-    private LhUnitSupplyIngestService lhUnitSupplyIngestService;
+    private LhNoticeIngestService lhNoticeIngestService;
     @MockitoBean
     private LhLeaseInfoIngestService lhLeaseInfoIngestService;
     @MockitoBean
-    private NoticeHousingCatalogMatchService catalogMatchService;
-    @MockitoBean
-    private NoticeHousingLhMatchService lhMatchService;
-    @MockitoBean
-    private NoticeHousingUnitTypeMatchService unitTypeMatchService;
+    private NoticeSupplyCatalogLinker catalogLinker;
     @MockitoBean
     @Qualifier("lhApiClient")
     private OpenApiClient lhApiClient;
@@ -62,6 +52,11 @@ class IngestControllerTest {
                 .andExpect(status().isOk());
         verify(complexIngestService).ingestNationwide(500, 50);
 
+        when(lhLeaseInfoIngestService.ingest(9999, 1)).thenReturn(IngestReport.empty());
+        mockMvc.perform(post("/admin/ingest/lease-infos"))
+                .andExpect(status().isOk());
+        verify(lhLeaseInfoIngestService).ingest(9999, 1);
+
         when(noticeIngestService.ingest(100, 50)).thenReturn(IngestReport.empty());
         mockMvc.perform(post("/admin/ingest/notices")
                         .param("pageSize", "100")
@@ -69,21 +64,14 @@ class IngestControllerTest {
                 .andExpect(status().isOk());
         verify(noticeIngestService).ingest(100, 50);
 
-        when(lhLeaseInfoIngestService.ingest(9999, 1)).thenReturn(IngestReport.empty());
-        mockMvc.perform(post("/admin/ingest/lease-infos"))
+        when(lhNoticeIngestService.ingest()).thenReturn(IngestReport.empty());
+        mockMvc.perform(post("/admin/ingest/lh-notices"))
                 .andExpect(status().isOk());
-        verify(lhLeaseInfoIngestService).ingest(9999, 1);
+        verify(lhNoticeIngestService).ingest();
 
-        mockMvc.perform(post("/admin/ingest/matches/catalog").param("noticeVersionId", "7"))
+        when(catalogLinker.linkAll()).thenReturn(IngestReport.empty());
+        mockMvc.perform(post("/admin/ingest/links"))
                 .andExpect(status().isOk());
-        verify(catalogMatchService).match(7L, "catalog-pnu-v1");
-
-        mockMvc.perform(post("/admin/ingest/matches/lh").param("noticeVersionId", "7"))
-                .andExpect(status().isOk());
-        verify(lhMatchService).match(7L, "lh-address-unit-v1");
-
-        mockMvc.perform(post("/admin/ingest/matches/unit-type").param("noticeVersionId", "7"))
-                .andExpect(status().isOk());
-        verify(unitTypeMatchService).match(7L, "lh-address-unit-v1", "catalog-pnu-v1", "unit-type-area-v1");
+        verify(catalogLinker).linkAll();
     }
 }
