@@ -51,7 +51,7 @@ public class HousingComplex {
     /** 설계 필드. 아래 completionDate 에서 연도만 뽑은 값이라 같이 채워진다. */
     private Integer completionYear;
 
-    /** 설계에 없던 칸. 원천 competDe 는 "20250627" 처럼 날짜를 다 준다. 221/2,005(11%)만 채워진다. */
+    /** 설계에 없던 칸. 원천 competDe 는 "20250627" 처럼 날짜를 다 준다. 3,193/3,286(97%) 채워진다. */
     @Column(name = "completion_date")
     private LocalDate completionDate;
 

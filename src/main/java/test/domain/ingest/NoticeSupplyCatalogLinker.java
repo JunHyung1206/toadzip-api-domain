@@ -126,12 +126,69 @@ public class NoticeSupplyCatalogLinker {
             supply.linkCatalog(complex, null, "전용면적 %s㎡ 근처의 카탈로그 주택형 없음".formatted(area));
             return;
         }
-        if (candidates.size() > 1) {
+        if (candidates.size() == 1) {
+            supply.linkCatalog(complex, candidates.getFirst(), null);
+            return;
+        }
+        UnitType exact = onlyExactAreaMatch(candidates, area);
+        if (exact != null) {
+            supply.linkCatalog(complex, exact, null);
+            return;
+        }
+        UnitType bySupplyArea = onlySupplyAreaMatch(candidates, supply.getSupplyArea());
+        if (bySupplyArea == null) {
             supply.linkCatalog(complex, null,
                     "전용면적 %s㎡ 근처 카탈로그 주택형 후보 %d건".formatted(area, candidates.size()));
             return;
         }
-        supply.linkCatalog(complex, candidates.getFirst(), null);
+        supply.linkCatalog(complex, bySupplyArea, null);
+    }
+
+    /**
+     * 오차 범위 후보가 여럿일 때 <b>면적이 정확히 같은</b> 주택형이 하나뿐이면 그걸 고른다.
+     *
+     * <p>부산정관 행복주택은 카탈로그에 26.75㎡와 26.78㎡가 둘 다 {@code 26} 이라는 이름으로 있어,
+     * 26.75㎡ 공급행이 ±0.05 안에 둘 다 걸린다. 이름으로는 못 가른다 — LH 는 {@code 26형(고령자)},
+     * 마이홈은 {@code 26} 이라 표기 체계가 다르다(실측 29건 중 이름으로 풀리는 건 0건).
+     * 면적 완전일치로는 21건이 풀린다.
+     *
+     * @return 완전일치가 정확히 하나일 때 그 주택형, 0건이거나 2건 이상이면 {@code null}
+     */
+    private UnitType onlyExactAreaMatch(List<UnitType> candidates, BigDecimal area) {
+        List<UnitType> exact = candidates.stream()
+                .filter(unitType -> unitType.getExclusiveArea().compareTo(area) == 0)
+                .toList();
+        return exact.size() == 1 ? exact.getFirst() : null;
+    }
+
+    /**
+     * 전용면적 완전일치도 갈라 주지 못할 때 <b>공급면적</b>으로 가른다. 카탈로그에 전용면적이 같고
+     * 주거공용만 다른 주택형이 여럿 있는 단지가 있어서다.
+     *
+     * <pre>
+     *   산남주공2단지  26.37㎡ + 12.17㎡ = 38.54   ← 공고 SPL_AR 38.54
+     *   산남주공2단지  26.37㎡ + 13.56㎡ = 39.93
+     * </pre>
+     *
+     * 두 행 모두 이름이 {@code 26} 이고 전용면적이 26.3700 으로 같아 앞의 두 규칙으로는 안 갈린다.
+     * 15056765 는 {@code DDO_AR}(전용) 옆에 {@code SPL_AR}(공급)을 같이 주므로 그걸 쓴다.
+     * 실측 8건이 전부 이 규칙으로 유일하게 확정됐다.
+     *
+     * @param supplyArea 공고 공급행의 공급면적. 없으면 이 규칙을 쓰지 않는다
+     * @return 공급면적이 일치하는 주택형이 정확히 하나일 때 그 주택형, 아니면 {@code null}
+     */
+    private UnitType onlySupplyAreaMatch(List<UnitType> candidates, BigDecimal supplyArea) {
+        if (supplyArea == null) {
+            return null;
+        }
+        List<UnitType> matched = candidates.stream()
+                .filter(unitType -> unitType.getResidentialCommonArea() != null)
+                .filter(unitType -> unitType.getExclusiveArea()
+                        .add(unitType.getResidentialCommonArea())
+                        .subtract(supplyArea).abs()
+                        .compareTo(AREA_TOLERANCE) <= 0)
+                .toList();
+        return matched.size() == 1 ? matched.getFirst() : null;
     }
 
     /**

@@ -18,10 +18,17 @@ public class ConstructionRentalPolicy {
     /** 이 서비스가 카탈로그와 모집공고로 다루는 건설형 공공임대. */
     private static final Set<String> CONSTRUCTION_RENTAL = Set.of(
             "영구임대", "국민임대", "행복주택", "통합공공임대",
-            "장기전세", "5년임대", "10년임대", "50년임대");
+            "5년임대", "10년임대", "50년임대");
 
-    /** 원천에 있는 건 아는데 우리 경계 밖인 공급유형. 단지가 없거나(전세) 대상 주택이 흩어져 있다(매입). */
-    private static final Set<String> KNOWN_BUT_EXCLUDED = Set.of("매입임대", "전세임대");
+    /**
+     * 원천에 있는 건 아는데 우리 경계 밖인 공급유형. 단지가 없거나(전세) 대상 주택이 흩어져 있다(매입).
+     *
+     * <p>장기전세도 여기다. 실측 248단지 중 242가 SH공사이고 평균 135세대인데, 단지명이
+     * "힐스테이트동작시그니처(동작하이팰리스지역주택조합)"처럼 민간 정비사업 단지에 몇십 세대씩 박힌
+     * 매입 물량이다. 245개가 {@code houseTyNm="아파트"} 라 {@link #hasConstructionEvidence} 로는
+     * 못 거르고, 원천에 건설·매입을 가르는 필드가 없어 유형 단위로 끊는다.
+     */
+    private static final Set<String> KNOWN_BUT_EXCLUDED = Set.of("매입임대", "전세임대", "장기전세");
 
     /** 원천 houseTyNm 이 이 값이면 준공일이 없어도 건설형으로 본다. */
     private static final String APARTMENT = "아파트";

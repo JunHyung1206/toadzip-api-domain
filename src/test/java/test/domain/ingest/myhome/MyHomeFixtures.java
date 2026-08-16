@@ -25,8 +25,8 @@ final class MyHomeFixtures {
      * HWSPR04 — 서울 노원구 "중계센트럴파크"(SH공사). 건설임대 아파트라 이 카탈로그가 담는 대상이다.
      *
      * <p>주택형이 `49A`, `49A-2`, `49A-S`, `49B` 처럼 아파트 형식이고 호실 번호가 섞이지 않는다.
-     * 그리고 <b>`49A` 가 국민임대와 장기전세로 두 번 온다 — 주택형명도 면적도 같고 공급유형만 다르다.</b>
-     * 자연키에 공급유형이 왜 필요한지 보여 주는 실제 행이다.
+     * <b>다섯 행 중 둘(`49A`, `49A-2`)은 장기전세라 이제 걸러진다</b> — 같은 hsmpSn 에 허용 유형과
+     * 비허용 유형이 함께 오는 실제 행이다. 남는 건 국민임대 단지 하나와 주택형 셋이다.
      */
     static List<MyHomeComplexItem> constructedComplexItems() {
         return parse("""
@@ -109,7 +109,8 @@ final class MyHomeFixtures {
      *
      * <p>앞 둘은 성남시 "매입임대주택" — 단지명과 주택형 자리에는 매입임대라고 적혀 있는데 정작
      * {@code suplyTyNm} 은 '10년임대'다. 셋째는 대구 노블힐즈4로, 같은 hsmpSn 에 '매입임대' 행이
-     * 따로 오는 건물인데 이 행만 '장기전세'로 온다. 셋 다 준공일·난방·주차가 비어 있다.
+     * 따로 오는 건물인데 이 행만 '장기전세'로 온다 — 장기전세를 제외한 뒤로는 라벨 단계에서 먼저 걸린다.
+     * 셋 다 준공일·난방·주차가 비어 있다.
      */
     static List<MyHomeComplexItem> purchasedItemsUnderConstructedLabel() {
         return parse("""

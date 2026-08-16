@@ -70,9 +70,11 @@ class MyHomeComplexIngestServiceTest {
     void skipsPurchasedRentalWearingConstructedLabel() {
         IngestReport report = service.apply(MyHomeFixtures.purchasedItemsUnderConstructedLabel());
 
-        // 라벨은 허용 대상이지만 건설 흔적이 없어 두 번째 경계에서 걸린다.
+        // 10년임대 두 행은 라벨이 허용 대상이라 건설 흔적이 없는 두 번째 경계에서 걸리고,
+        // 장기전세 행은 라벨 단계에서 먼저 걸린다.
         assertThat(report.rejectedByReason())
-                .containsEntry(IngestRejectionReason.NOT_CONSTRUCTION_HOUSING, 3);
+                .containsEntry(IngestRejectionReason.NOT_CONSTRUCTION_HOUSING, 2)
+                .containsEntry(IngestRejectionReason.UNSUPPORTED_SUPPLY_TYPE, 1);
         assertThat(complexRepository.count()).isZero();
         assertThat(unitTypeRepository.count()).isZero();
     }
@@ -103,14 +105,15 @@ class MyHomeComplexIngestServiceTest {
     }
 
     @Test
-    @DisplayName("한 행이 단지가 아니라 단지×공급유형×주택형이라 5행이 공급유형별 단지 2개 + 주택형 5개가 된다")
+    @DisplayName("한 행이 단지가 아니라 단지×공급유형×주택형이라 5행이 단지 1개 + 주택형 3개가 되고 장기전세 2행은 걸러진다")
     void splitsRowsIntoComplexAndUnitTypes() {
         IngestReport report = service.apply(MyHomeFixtures.constructedComplexItems());
 
-        assertThat(report.created()).isEqualTo(2);
-        assertThat(report.rejected()).isZero();
-        assertThat(complexRepository.count()).isEqualTo(2);
-        assertThat(unitTypeRepository.count()).isEqualTo(5);
+        assertThat(report.created()).isEqualTo(1);
+        assertThat(report.rejectedByReason())
+                .containsEntry(IngestRejectionReason.UNSUPPORTED_SUPPLY_TYPE, 2);
+        assertThat(complexRepository.count()).isEqualTo(1);
+        assertThat(unitTypeRepository.count()).isEqualTo(3);
     }
 
     @Test
@@ -119,26 +122,25 @@ class MyHomeComplexIngestServiceTest {
         service.apply(MyHomeFixtures.constructedComplexItems());
 
         assertThat(unitTypeRepository.findAll()).extracting(UnitType::getTypeName)
-                .containsExactlyInAnyOrder("49A", "49A", "49A-2", "49A-S", "49B");
+                .containsExactlyInAnyOrder("49A", "49A-S", "49B");
     }
 
     @Test
     @DisplayName("주택형명도 면적도 같은데 공급유형만 다르면 별개 주택형이다")
     void keepsSameUnitApartBySupplyType() {
-        service.apply(MyHomeFixtures.constructedComplexItems());
+        service.apply(MyHomeFixtures.complexItemsWithTwoSupplyTypes());
 
         List<UnitType> sameName = unitTypeRepository.findAll().stream()
-                .filter(unitType -> unitType.getTypeName().equals("49A"))
+                .filter(unitType -> unitType.getTypeName().equals("51A"))
                 .toList();
 
         assertThat(sameName).hasSize(2);
         assertThat(sameName).extracting(UnitType::getExclusiveArea)
-                .allSatisfy(area -> assertThat(area).isEqualByComparingTo(new BigDecimal("49.90")));
+                .allSatisfy(area -> assertThat(area).isEqualByComparingTo(new BigDecimal("51.7377")));
         assertThat(sameName).extracting(unitType -> unitType.getHousingComplex().getSupplyTypeName())
-                .containsExactlyInAnyOrder("국민임대", "장기전세");
-        // 장기전세는 보증금만 있고 월세가 0이다.
+                .containsExactlyInAnyOrder("국민임대", "행복주택");
         assertThat(sameName).extracting(unitType -> unitType.getBaseRentTerms().getDeposit())
-                .containsExactlyInAnyOrder(63_850_000L, 311_220_000L);
+                .containsExactlyInAnyOrder(125_070_000L, 196_800_000L);
     }
 
     @Test
@@ -174,24 +176,24 @@ class MyHomeComplexIngestServiceTest {
     @Test
     @DisplayName("공급유형별 세대수는 각 단지 행에 따로 남는다")
     void keepsUnitCountPerSupplyTypeComplex() {
-        service.apply(MyHomeFixtures.constructedComplexItems());
+        service.apply(MyHomeFixtures.complexItemsWithTwoSupplyTypes());
 
-        // 국민임대 115 / 장기전세 114. 물리 단지 전체 세대수(229)로 합쳐지지 않는다.
+        // 국민임대 10 / 행복주택 8. 물리 단지 전체 세대수(18)로 합쳐지지 않는다.
         assertThat(complexRepository.findAll())
                 .extracting(HousingComplex::getUnitCount)
-                .containsExactlyInAnyOrder(115, 114);
+                .containsExactlyInAnyOrder(10, 8);
     }
 
     @Test
     @DisplayName("같은 hsmpSn이라도 공급유형이 다르면 별도 단지 행이라, 자연키가 한글 공급유형명이다")
     void keepsSupplyTypeNameAsPartOfTheNaturalKey() {
-        service.apply(MyHomeFixtures.constructedComplexItems());
+        service.apply(MyHomeFixtures.complexItemsWithTwoSupplyTypes());
 
         assertThat(complexRepository.findAll()).extracting(HousingComplex::getSupplyTypeName)
-                .containsExactlyInAnyOrder("국민임대", "장기전세");
-        assertThat(complexRepository.findBySourceComplexIdAndSupplyTypeName("30965288", "국민임대"))
+                .containsExactlyInAnyOrder("국민임대", "행복주택");
+        assertThat(complexRepository.findBySourceComplexIdAndSupplyTypeName("31696890", "국민임대"))
                 .isPresent();
-        assertThat(complexRepository.findBySourceComplexIdAndSupplyTypeName("30965288", "매입임대"))
+        assertThat(complexRepository.findBySourceComplexIdAndSupplyTypeName("31696890", "매입임대"))
                 .isEmpty();
     }
 
@@ -202,9 +204,10 @@ class MyHomeComplexIngestServiceTest {
 
         IngestReport second = service.apply(MyHomeFixtures.constructedComplexItems());
 
-        assertThat(second).isEqualTo(new IngestReport(0, 0, 2, 0, Map.of()));
-        assertThat(complexRepository.count()).isEqualTo(2);
-        assertThat(unitTypeRepository.count()).isEqualTo(5);
+        assertThat(second).isEqualTo(new IngestReport(0, 0, 1, 0,
+                Map.of(IngestRejectionReason.UNSUPPORTED_SUPPLY_TYPE, 2)));
+        assertThat(complexRepository.count()).isEqualTo(1);
+        assertThat(unitTypeRepository.count()).isEqualTo(3);
     }
 
     @Test
