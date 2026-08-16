@@ -18,7 +18,6 @@ class LhSupplyInfoTypeResolverTest {
             "50년임대,061",
             "국민임대,062",
             "영구임대,062",
-            "장기전세,062",
             "행복주택,063"
     })
     void resolvesOfficialSupplyInfoType(String supplyTypeName, String expected) {
@@ -47,5 +46,11 @@ class LhSupplyInfoTypeResolverTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> resolver.resolve("전세임대"))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void skipsLongTermJeonseWithoutThrowing() {
+        // 제외하기 전에 적재된 공고가 DB 에 남아 있을 수 있다. 던지면 LH 적재 배치 전체가 죽는다.
+        assertThat(resolver.resolve("장기전세")).isEmpty();
     }
 }

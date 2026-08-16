@@ -20,7 +20,6 @@ public enum MyHomeRentalType {
     FIFTY_YEAR_RENTAL("03", "50년임대"),
     TEN_YEAR_RENTAL("05", "10년임대"),
     FIVE_YEAR_RENTAL("06", "5년임대"),
-    LONG_TERM_JEONSE("07", "장기전세"),
     HAPPY_HOUSE("10", "행복주택"),
     INTEGRATED_PUBLIC_RENTAL("12", "통합공공임대");
 

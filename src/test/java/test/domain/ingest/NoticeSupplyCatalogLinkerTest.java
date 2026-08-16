@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import test.domain.housing.Address;
 import test.domain.housing.HousingComplex;
 import test.domain.housing.HousingComplexRepository;
@@ -50,6 +52,16 @@ class NoticeSupplyCatalogLinkerTest {
 
     @BeforeEach
     void setUp() {
+        // 적재 테스트들이 REQUIRES_NEW 로 커밋한 공고·단지가 @DataJpaTest 롤백을 지나 남는다.
+        // 그중 공고 20989 는 아래에서 쓰는 것과 같은 pblancId 라, 먼저 비우지 않으면 자연키가 충돌한다.
+        TransactionTemplate cleanup = new TransactionTemplate(transactionManager);
+        cleanup.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        cleanup.executeWithoutResult(status -> {
+            supplyRepository.deleteAll();
+            noticeRepository.deleteAll();
+            unitTypeRepository.deleteAll();
+            complexRepository.deleteAll();
+        });
         linker = new NoticeSupplyCatalogLinker(
                 noticeRepository, supplyRepository, complexRepository, unitTypeRepository, transactionManager);
         notice = noticeRepository.save(Notice.firstVersion("20989", null,
@@ -64,8 +76,12 @@ class NoticeSupplyCatalogLinkerTest {
     }
 
     private UnitType unitType(String typeName, String exclusiveArea) {
+        return unitType(typeName, exclusiveArea, "10.0000");
+    }
+
+    private UnitType unitType(String typeName, String exclusiveArea, String residentialCommonArea) {
         return unitTypeRepository.save(new UnitType(complex, typeName,
-                new BigDecimal(exclusiveArea), new BigDecimal("10.0000")));
+                new BigDecimal(exclusiveArea), new BigDecimal(residentialCommonArea)));
     }
 
     /** 마이홈 공급행 하나. LH 주택형 정보를 받기 전의 단지 단위 행이다. */
@@ -76,8 +92,12 @@ class NoticeSupplyCatalogLinkerTest {
 
     /** LH 15056765 를 받아 주택형까지 쪼갠 행. */
     private NoticeSupply saveUnitTypeRow(String pnu, String exclusiveArea) {
+        return saveUnitTypeRow(pnu, exclusiveArea, "36.80");
+    }
+
+    private NoticeSupply saveUnitTypeRow(String pnu, String exclusiveArea, String supplyArea) {
         return supplyRepository.save(complexRow(pnu).splitInto(0, new LhUnitSupplyValues(
-                "구리수택 행복주택", "26", new BigDecimal(exclusiveArea), new BigDecimal("36.80"),
+                "구리수택 행복주택", "26", new BigDecimal(exclusiveArea), new BigDecimal(supplyArea),
                 394, 30, "공고문 참조", "공고문 참조")));
     }
 
@@ -112,14 +132,55 @@ class NoticeSupplyCatalogLinkerTest {
     }
 
     @Test
-    @DisplayName("같은 면적 주택형이 둘이면 아무것도 고르지 않고 이유만 남긴다")
+    @DisplayName("오차 범위 후보가 둘인데 정확히 같은 면적이 없으면 아무것도 고르지 않고 이유만 남긴다")
     void leavesUnitTypeEmptyWhenAreaIsAmbiguous() {
-        unitType("26A", "26.7000");
+        unitType("26A", "26.6900");
         unitType("26B", "26.7100");
         saveUnitTypeRow(PNU, "26.7000");
 
         assertThat(linkAndReload()).singleElement().satisfies(supply -> {
             assertThat(supply.getHousingComplex().getId()).isEqualTo(complex.getId());
+            assertThat(supply.getUnitType()).isNull();
+            assertThat(supply.getUnmatchedReason()).contains("후보 2건");
+        });
+    }
+
+    @Test
+    @DisplayName("오차 범위 후보가 둘이어도 면적이 정확히 같은 게 하나면 그걸 고른다")
+    void picksTheOnlyExactAreaMatch() {
+        // 부산정관 행복주택 — 카탈로그에 이름이 둘 다 `26` 인 26.75㎡와 26.78㎡가 같이 있다.
+        UnitType expected = unitType("26", "26.7500");
+        unitType("26", "26.7800");
+        saveUnitTypeRow(PNU, "26.7500");
+
+        assertThat(linkAndReload()).singleElement().satisfies(supply -> {
+            assertThat(supply.getUnitType().getId()).isEqualTo(expected.getId());
+            assertThat(supply.getUnmatchedReason()).isNull();
+        });
+    }
+
+    @Test
+    @DisplayName("전용면적이 같고 주거공용만 다르면 공급면적으로 가른다")
+    void picksTheOnlySupplyAreaMatch() {
+        // 산남주공2단지 — 26.37㎡ 짜리가 둘인데 주거공용이 12.17 과 13.56 으로 갈린다.
+        UnitType expected = unitType("26", "26.3700", "12.1700");
+        unitType("26", "26.3700", "13.5600");
+        saveUnitTypeRow(PNU, "26.3700", "38.5400");
+
+        assertThat(linkAndReload()).singleElement().satisfies(supply -> {
+            assertThat(supply.getUnitType().getId()).isEqualTo(expected.getId());
+            assertThat(supply.getUnmatchedReason()).isNull();
+        });
+    }
+
+    @Test
+    @DisplayName("전용면적도 공급면적도 안 갈라 주면 못 고른다")
+    void leavesUnitTypeEmptyWhenExactMatchesTie() {
+        unitType("26A", "26.5300");
+        unitType("26B", "26.5300");
+        saveUnitTypeRow(PNU, "26.5300", "36.5300");
+
+        assertThat(linkAndReload()).singleElement().satisfies(supply -> {
             assertThat(supply.getUnitType()).isNull();
             assertThat(supply.getUnmatchedReason()).contains("후보 2건");
         });

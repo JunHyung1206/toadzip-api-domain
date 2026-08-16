@@ -112,6 +112,7 @@ public class LhLeaseInfoIngestService {
 
     private IngestReport applyRows(List<LeaseInfoRow> rows) {
         // 이번 스냅샷이 말하지 않는 주택형은 값을 비운다. 지난 응답의 세대수가 남아 있으면 안 된다.
+        // 이 원천이 totalUnitCount 의 유일한 주인이라 전체를 밀어도 남의 값을 지우지 않는다.
         unitTypeRepository.findAll().forEach(unitType -> unitType.updateTotalUnitCount(null));
 
         Map<CatalogKey, List<HousingComplex>> complexes = complexesByKey();

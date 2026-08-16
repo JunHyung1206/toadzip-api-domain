@@ -141,7 +141,8 @@ public class NoticeSupply {
     private String suppliedPnu;
 
     /**
-     * 원천 fullAdres. LH 단지 상세({@code dsSbd})의 지번주소와 대조해 <b>어느 LH 주택형 행이 이 단지의
+     * 원천 fullAdres. 실제로는 도로명이 온다(적재 247건 중 도로명 245·지번 2). LH 단지 상세
+     * ({@code dsSbd})의 {@code LGDN_ADR}과 대조해 <b>어느 LH 주택형 행이 이 단지의
      * 행인지</b> 정하는 키다. 시군구명·도로명·법정동명 같은 나머지 주소 조각은 이 값에 이미 들어 있어
      * 따로 두지 않는다.
      *

@@ -101,13 +101,14 @@ class MyHomeNoticeIngestServiceTest {
     }
 
     @Test
-    @DisplayName("허용된 8개 공급유형 코드만 요청한다")
-    void requestsOnlyEightApprovedSupplyTypeCodes() {
+    @DisplayName("허용된 7개 공급유형 코드만 요청한다")
+    void requestsOnlySevenApprovedSupplyTypeCodes() {
         service.ingest(100, 50);
 
         assertThat(capturedSupplyTypeCodes)
-                .containsExactly("01", "02", "03", "05", "06", "07", "10", "12")
-                .doesNotContain("13");
+                .containsExactly("01", "02", "03", "05", "06", "10", "12")
+                // 07 장기전세는 건설임대가 아니라 요청 자체를 하지 않는다.
+                .doesNotContain("07", "13");
     }
 
     @Test
