@@ -201,7 +201,7 @@ LH 원천(`B552555`)은 다른 규칙을 쓴다. `AHFL`=첨부파일, `CMN`=공�
 
 `LhNoticeRequest.from()`이 이 네 값을 뽑는다. `aisTpCd`는 링크에 없을 수 있어 생략 가능하고, 나머지 셋은 없으면 호출 자체를 하지 않는다. 같은 요청으로 15056765도 이어서 부른다(5장). [LhNoticeRequest.java:28](../src/main/java/test/domain/ingest/lh/LhNoticeRequest.java)
 
-`panId`가 있다 = LH 공고라는 뜻이다. 공고 58건 중 56건이 LH 건이고 나머지 2건은 지방공사라 이 원천에 없다.
+현재 공고 52건 중 48건은 상세 URL에서 `panId`와 호출 파라미터를 확보했다. 나머지는 지방공사 3건과, `SPL_INF_TP_CD`를 아직 확인하지 못한 LH 통합공공임대 1건이다.
 
 ### `SPL_INF_TP_CD` — 공급정보구분코드
 
@@ -345,11 +345,11 @@ LH 원천(`B552555`)은 다른 규칙을 쓴다. `AHFL`=첨부파일, `CMN`=공�
 
 ### 단지·주택형 매칭
 
-**`SBD_LGO_NM`을 카탈로그 단지명과 대조하면 안 된다.** 두 원천의 명명 체계가 다르다 — 실측 19%만 맞았다([원천-정리.md](원천-정리.md) 3장). 같은 LH 계열인 15057999의 `LCC_NT_NM`과 맞춰야 하고, 그건 실측 290/290이다.
+**`SBD_LGO_NM`을 카탈로그 단지명과 대조하면 안 된다.** 두 원천의 명명 체계가 다르다 — 실측 19%만 맞았다([원천-정리.md](원천-정리.md) 3장). 같은 LH 계열인 15057999의 `LCC_NT_NM`과 맞춰야 하고, 현재 실측은 252/252다.
 
 ```
-dsList01 ─LH단지명─> dsSbd ─지번주소─> 마이홈 공급행 ─PNU─> HousingComplex ─전용면적─> UnitType
-         290/290       95건            97건
+dsList01 ─LH단지명─> dsSbd ─상세주소─> 마이홈 공급행 ─PNU─> HousingComplex ─면적─> UnitType
+         252/252       228/252             224/252             224/252
 ```
 
 앞 두 구간은 **행을 만들 때** 결정된다(`LhNoticeIngestService`). 어느 LH 주택형 행과 어느 마이홈
@@ -358,12 +358,12 @@ dsList01 ─LH단지명─> dsSbd ─지번주소─> 마이홈 공급행 ─PNU
 
 주택형명(`HTY_NNA`)도 매칭 키로 쓰지 않는다 — "59㎡"처럼 단위가 붙어 카탈로그 `styleNm`("59")과 표기가 갈린다. 두 원천 다 ㎡ 소수로 오는 **전용면적**(허용오차 0.05㎡)이 근거고, 원문은 `NoticeSupply.typeName`에 그대로 남는다.
 
-| 결과 | 의미 | 실측(290행) |
+| 결과 | 의미 | 실측(252행) |
 | --- | --- | ---: |
-| `unitTypeId` 확정 | 전용면적 근처 카탈로그 주택형이 정확히 하나 | 216 |
-| 면적 후보 다수 | 둘 이상 — 대개 공급대상만 다른 같은 면적 | 30 |
+| `unitTypeId` 확정 | 단지 경로와 면적 규칙으로 카탈로그 주택형을 확정 | 224 |
+| 면적 후보 다수 | 공급면적까지 적용해도 카탈로그 주택형이 여러 개 | 0 |
 | 면적 후보 없음 | 단지는 확정됐는데 면적이 맞는 주택형이 없음 | 0 |
-| 앞 구간 단절 | 주소 또는 PNU에서 끊김 | 44 |
+| 앞 구간 단절 | 주소 또는 PNU에서 끊김 | 28 |
 
 못 붙은 이유는 상태 enum이 아니라 `NoticeSupply.unmatchedReason` 문자열 한 칸에 남는다.
 `/admin/ingest/lh-notices` 뒤에 `/admin/ingest/links`를 돌린다. [NoticeSupplyCatalogLinker.java](../src/main/java/test/domain/ingest/NoticeSupplyCatalogLinker.java)
